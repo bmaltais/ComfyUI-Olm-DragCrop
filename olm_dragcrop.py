@@ -17,6 +17,7 @@ class OlmDragCrop:
             "required": {
                 "drawing_version": ("STRING", {"default": "init"}),
                 "image": ("IMAGE",),
+                "aspect_ratio": ("STRING", {"default": "free"}),
                 "crop_left": ("INT", {"default": 0, "min": 0, "max": 8192}),
                 "crop_right": ("INT", {"default": 0, "min": 0, "max": 8192}),
                 "crop_top": ("INT", {"default": 0, "min": 0, "max": 8192}),
@@ -42,6 +43,7 @@ class OlmDragCrop:
         self,
         drawing_version,
         image: torch.Tensor,
+        aspect_ratio: str,
         crop_left: int,
         crop_right: int,
         crop_top: int,
@@ -57,6 +59,56 @@ class OlmDragCrop:
         print(f"[DragCrop] Node {node_id} executed (Backend)")
 
         batch_size, current_height, current_width, channels = image.shape
+
+        # Aspect ratio parsing
+        aspect_ratio_float = None
+        if aspect_ratio != "free":
+            try:
+                if ":" in aspect_ratio:
+                    w, h = map(float, aspect_ratio.split(':'))
+                    if h > 0:
+                        aspect_ratio_float = w / h
+                else:
+                    aspect_ratio_float = float(aspect_ratio)
+            except ValueError:
+                print(f"[DragCrop] Invalid aspect ratio format: {aspect_ratio}. Defaulting to free.")
+                aspect_ratio_float = None
+
+        if aspect_ratio_float is not None:
+
+            # Uncrop the image to its original size first
+            full_width = crop_left + crop_width + crop_right
+            full_height = crop_top + crop_height + crop_bottom
+
+            # Center of the crop box
+            center_x = crop_left + crop_width / 2
+            center_y = crop_top + crop_height / 2
+
+            # Adjust width and height based on aspect ratio
+            if crop_width / crop_height > aspect_ratio_float:
+                crop_height = crop_width / aspect_ratio_float
+            else:
+                crop_width = crop_height * aspect_ratio_float
+
+            # Recalculate crop_left and crop_top to keep the crop centered
+            crop_left = center_x - crop_width / 2
+            crop_top = center_y - crop_height / 2
+
+            # Ensure the new crop is within the image boundaries
+            if crop_left < 0:
+                crop_left = 0
+            if crop_top < 0:
+                crop_top = 0
+            if crop_left + crop_width > full_width:
+                crop_width = full_width - crop_left
+                crop_height = crop_width / aspect_ratio_float
+            if crop_top + crop_height > full_height:
+                crop_height = full_height - crop_top
+                crop_width = crop_height * aspect_ratio_float
+
+            crop_right = full_width - crop_left - crop_width
+            crop_bottom = full_height - crop_top - crop_height
+
 
         debug_print("\n[Input Image Info]")
         debug_print(f"- Current image size: {current_width}x{current_height}")

@@ -146,9 +146,6 @@ app.registerExtension({
 
       this.properties.snapValue = DEFAULT_SNAP_VALUE;
 
-      this.properties.aspectRatioString = ASPECT_STRING_MESSAGE;
-      this.properties.aspectLockEnabled = false;
-
       this.properties.infoDisplayEnabled = true;
 
       this.image = new Image();
@@ -170,9 +167,6 @@ app.registerExtension({
       this.cropData_height = DEFAULT_SIZE;
 
       this.snapValue = DEFAULT_SNAP_VALUE;
-
-      this.aspectRatioString = ASPECT_STRING_MESSAGE;
-      this.aspectLockEnabled = false;
 
       this.infoDisplayEnabled = true;
 
@@ -228,36 +222,6 @@ app.registerExtension({
           values: ["none", "2", "4", "8", "16", "32", "64"],
         }
       );
-
-      const aspectRatioWidget = this.addWidget(
-        "string",
-        "Aspect Ratio",
-        this.aspectRatioString,
-        (value) => {
-          this.aspectRatioString = value;
-          this.commitState();
-        }
-      );
-
-      const lockWidget = this.addWidget(
-        "toggle",
-        "Aspect Ratio Lock",
-        this.aspectLockEnabled,
-        (value) => {
-          this.aspectLockEnabled = value;
-          this.commitState();
-        }
-      );
-
-      this.addWidget("button", "Set Ratio from Crop", "set_ratio", () => {
-        const confirmed = window.confirm(
-          "Use the current crop dimensions to set the aspect ratio?\nThis will overwrite any previously set ratio."
-        );
-        if (confirmed) {
-          this.setRatioFromCurrentCrop();
-          this.commitState();
-        }
-      });
 
       const crop_left = this.getWidget("crop_left");
       crop_left.callback = (value) => {
@@ -425,10 +389,6 @@ app.registerExtension({
 
       this.snapValue = this.properties.snapValue ?? DEFAULT_SNAP_VALUE;
 
-      this.aspectRatioString =
-        this.properties.aspectRatioString ?? ASPECT_STRING_MESSAGE;
-      this.aspectLockEnabled = this.properties.aspectLockEnabled ?? false;
-
       this.infoDisplayEnabled = this.properties.infoDisplayEnabled ?? true;
 
       this.box_color = this.properties.box_color;
@@ -452,8 +412,6 @@ app.registerExtension({
       safeAssign(this.properties, "actualImageHeight", this.actualImageHeight);
       safeAssign(this.properties, "dragStart", this.dragStart);
       safeAssign(this.properties, "dragEnd", this.dragEnd);
-      safeAssign(this.properties, "aspectRatioString", this.aspectRatioString);
-      safeAssign(this.properties, "aspectLockEnabled", this.aspectLockEnabled);
       safeAssign(
         this.properties,
         "infoDisplayEnabled",
@@ -781,208 +739,6 @@ app.registerExtension({
       return true;
     };
 
-    nodeType.prototype.handleAspectRatioMove = function (
-      mousePosLocal,
-      preview
-    ) {
-      const width = this.dragEnd[0] - this.dragStart[0];
-      const height = this.dragEnd[1] - this.dragStart[1];
-
-      const centerOffset = [width / 2, height / 2];
-
-      const proposedStart = [
-        mousePosLocal.x - centerOffset[0],
-        mousePosLocal.y - centerOffset[1],
-      ];
-
-      const clampedStartX = clamp(proposedStart[0], 0, preview.width - width);
-      const clampedStartY = clamp(proposedStart[1], 0, preview.height - height);
-      const clampedEndX = clampedStartX + width;
-      const clampedEndY = clampedStartY + height;
-
-      this.dragStart = [clampedStartX, clampedStartY];
-      this.dragEnd = [clampedEndX, clampedEndY];
-    };
-
-    function handleAspectRatioCornerDrag(
-      mode,
-      mousePosLocal,
-      preview,
-      originalDragStart,
-      originalDragEnd,
-      aspectRatio,
-      MIN_WIDTH,
-      MIN_HEIGHT,
-      node
-    ) {
-      const anchorMap = {
-        "bottom-right": clonePoint(originalDragStart),
-        "top-left": clonePoint(originalDragEnd),
-        "top-right": [originalDragStart[0], originalDragEnd[1]],
-        "bottom-left": [originalDragEnd[0], originalDragStart[1]],
-      };
-
-      const anchor = anchorMap[mode];
-      const isRight = mode.includes("right");
-      const isBottom = mode.includes("bottom");
-
-      const maxW = isRight ? preview.width - anchor[0] : anchor[0];
-      const maxH = isBottom ? preview.height - anchor[1] : anchor[1];
-
-      let newWidth = Math.abs(mousePosLocal.x - anchor[0]);
-      let newHeight = Math.abs(mousePosLocal.y - anchor[1]);
-
-      if (newWidth / aspectRatio > newHeight) {
-        newHeight = newWidth / aspectRatio;
-      } else {
-        newWidth = newHeight * aspectRatio;
-      }
-
-      newWidth = Math.min(newWidth, maxW);
-      newHeight = Math.min(newHeight, maxH);
-
-      if (newWidth === maxW) newHeight = newWidth / aspectRatio;
-      if (newHeight === maxH) newWidth = newHeight * aspectRatio;
-
-      newWidth = Math.max(newWidth, MIN_WIDTH);
-      newHeight = Math.max(newHeight, MIN_HEIGHT);
-
-      if (isRight) node.dragEnd[0] = anchor[0] + newWidth;
-      else node.dragStart[0] = anchor[0] - newWidth;
-
-      if (isBottom) node.dragEnd[1] = anchor[1] + newHeight;
-      else node.dragStart[1] = anchor[1] - newHeight;
-    }
-
-    function handleAspectRatioEdgeDrag(
-      mode,
-      mousePosLocal,
-      preview,
-      dragStart,
-      dragEnd,
-      aspectRatio,
-      MIN_WIDTH,
-      MIN_HEIGHT,
-      node
-    ) {
-      switch (mode) {
-        case "left": {
-          const maxX = dragEnd[0] - MIN_WIDTH;
-          const proposedX = clamp(mousePosLocal.x, 0, maxX);
-          const width = dragEnd[0] - proposedX;
-          let height = width / aspectRatio;
-
-          if (dragEnd[1] - height < 0) {
-            height = dragEnd[1];
-          }
-
-          const finalWidth = height * aspectRatio;
-          if (finalWidth >= MIN_WIDTH && height >= MIN_HEIGHT) {
-            node.dragStart = [dragEnd[0] - finalWidth, dragEnd[1] - height];
-            node.dragEnd = [...dragEnd];
-          }
-          break;
-        }
-
-        case "right": {
-          const minX = dragStart[0] + MIN_WIDTH;
-          const proposedX = clamp(mousePosLocal.x, minX, preview.width);
-          const width = proposedX - dragStart[0];
-          let height = width / aspectRatio;
-
-          if (dragStart[1] + height > preview.height) {
-            height = preview.height - dragStart[1];
-          }
-
-          const finalWidth = height * aspectRatio;
-          if (finalWidth >= MIN_WIDTH && height >= MIN_HEIGHT) {
-            node.dragEnd = [dragStart[0] + finalWidth, dragStart[1] + height];
-            node.dragStart = [...dragStart];
-          }
-          break;
-        }
-
-        case "top": {
-          const maxY = dragEnd[1] - MIN_HEIGHT;
-          const proposedY = clamp(mousePosLocal.y, 0, maxY);
-          const height = dragEnd[1] - proposedY;
-          let width = height * aspectRatio;
-
-          if (dragEnd[0] - width < 0) {
-            width = dragEnd[0];
-          }
-
-          const finalHeight = width / aspectRatio;
-          if (width >= MIN_WIDTH && finalHeight >= MIN_HEIGHT) {
-            node.dragStart = [dragEnd[0] - width, dragEnd[1] - finalHeight];
-            node.dragEnd = [...dragEnd];
-          }
-          break;
-        }
-
-        case "bottom": {
-          const minY = dragStart[1] + MIN_HEIGHT;
-          const proposedY = clamp(mousePosLocal.y, minY, preview.height);
-          const height = proposedY - dragStart[1];
-          let width = height * aspectRatio;
-
-          if (dragStart[0] + width > preview.width) {
-            width = preview.width - dragStart[0];
-          }
-
-          const finalHeight = width / aspectRatio;
-          if (width >= MIN_WIDTH && finalHeight >= MIN_HEIGHT) {
-            node.dragEnd = [dragStart[0] + width, dragStart[1] + finalHeight];
-            node.dragStart = [...dragStart];
-          }
-          break;
-        }
-      }
-    }
-
-    nodeType.prototype.handleAspectRatioDrag = function (
-      mousePosLocal,
-      preview,
-      MIN_WIDTH,
-      MIN_HEIGHT,
-      lockedAspectRatio
-    ) {
-      const dragMode = this.dragMode;
-
-      switch (dragMode) {
-        case "top-left":
-        case "top-right":
-        case "bottom-left":
-        case "bottom-right":
-          return handleAspectRatioCornerDrag(
-            dragMode,
-            mousePosLocal,
-            preview,
-            this.originalDragStart,
-            this.originalDragEnd,
-            lockedAspectRatio,
-            MIN_WIDTH,
-            MIN_HEIGHT,
-            this
-          );
-
-        case "left":
-        case "right":
-        case "top":
-        case "bottom":
-          return handleAspectRatioEdgeDrag(
-            dragMode,
-            mousePosLocal,
-            preview,
-            this.dragStart,
-            this.dragEnd,
-            lockedAspectRatio,
-            MIN_WIDTH,
-            MIN_HEIGHT,
-            this
-          );
-      }
-    };
 
     function handleMoveDrag(node, mousePosLocal, preview) {
       const startLocal = node.getPreviewLocalPos(node.dragStartPos);
@@ -1172,7 +928,6 @@ app.registerExtension({
       const mousePos = [e.canvasX, e.canvasY];
       const mousePosLocal = this.getPreviewLocalPos(mousePos);
       const preview = this.getPreviewArea();
-      const lockedAspectRatio = this.getLockedAspectRatio();
 
       MIN_CROP_DIMENSION;
       const scaleX = this.actualImageWidth / preview.width;
@@ -1194,26 +949,7 @@ app.registerExtension({
           preview,
           MIN_WIDTH,
           MIN_HEIGHT,
-          lockedAspectRatio
-        );
-      } else if (this.dragMode === "move") {
-        if (lockedAspectRatio) {
-          this.handleAspectRatioMove(mousePosLocal, preview);
-        } else {
-          this.handleEdgeOrMoveDrag(
-            mousePosLocal,
-            preview,
-            MIN_WIDTH,
-            MIN_HEIGHT
-          );
-        }
-      } else if (lockedAspectRatio) {
-        this.handleAspectRatioDrag(
-          mousePosLocal,
-          preview,
-          MIN_WIDTH,
-          MIN_HEIGHT,
-          lockedAspectRatio
+          null
         );
       } else {
         this.handleEdgeOrMoveDrag(
@@ -1380,52 +1116,6 @@ app.registerExtension({
       return area;
     };
 
-    nodeType.prototype.getLockedAspectRatio = function () {
-      if (!this.aspectLockEnabled) return null;
-
-      const ratioStr = String(this.aspectRatioString || "").trim();
-      if (!ratioStr) return null;
-
-      if (ratioStr.includes(":")) {
-        const parts = ratioStr.split(":").map(Number);
-        if (
-          parts.length === 2 &&
-          !isNaN(parts[0]) &&
-          !isNaN(parts[1]) &&
-          parts[1] !== 0
-        ) {
-          return parts[0] / parts[1];
-        }
-      } else {
-        const num = parseFloat(ratioStr);
-        if (!isNaN(num) && num > 0) {
-          return num;
-        }
-      }
-
-      return null;
-    };
-
-    nodeType.prototype.setRatioFromCurrentCrop = function () {
-      if (!this.dragStart || !this.dragEnd) return;
-
-      this.normalizeCropBox();
-      const [x0, y0] = this.dragStart;
-      const [x1, y1] = this.dragEnd;
-
-      const boxWidth = x1 - x0;
-      const boxHeight = y1 - y0;
-
-      if (boxWidth > 0 && boxHeight > 0) {
-        const ratio = (boxWidth / boxHeight).toFixed(3);
-        this.aspectRatioString = ratio;
-        const ratioWidget = this.getWidget("Aspect Ratio");
-        if (ratioWidget) {
-          ratioWidget.value = ratio;
-        }
-        this.setDirtyCanvas(true);
-      }
-    };
 
     nodeType.prototype.getPreviewLocalPos = function (pos) {
       const previewArea = this.getPreviewArea();
