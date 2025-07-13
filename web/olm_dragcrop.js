@@ -108,8 +108,12 @@ app.registerExtension({
 
     nodeType.prototype.setWidgetValue = function (widgetName, val) {
       const widget = this.getWidget(widgetName);
-      if (widget && val !== null && val !== undefined) {
-        widget.value = Math.round(val);
+      if (widget) {
+        if (val !== null && val !== undefined) {
+          widget.value = Math.round(val);
+        } else {
+          widget.value = 0;
+        }
       }
     };
 
