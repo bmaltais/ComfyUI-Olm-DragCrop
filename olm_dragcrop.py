@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image
 import os
 from folder_paths import get_temp_directory
+import json
 
 DEBUG_MODE = False
 
@@ -34,7 +35,8 @@ class OlmDragCrop:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
+    RETURN_NAMES = ("IMAGE", "MASK", "CROP_JSON")
     FUNCTION = "crop"
     CATEGORY = "image/transform"
 
@@ -174,7 +176,7 @@ class OlmDragCrop:
                 print(f"[OlmDragCrop] Error saving preview image: {e}")
                 original_filename = None
 
-        crop_info_for_frontend = {
+        crop_payload = {
             "left": crop_left,
             "top": crop_top,
             "right": crop_right,
@@ -186,6 +188,12 @@ class OlmDragCrop:
             "reset_crop_ui": reset_frontend_crop
         }
 
+        crop_json = json.dumps(crop_payload)
+
+        crop_info_for_frontend = {
+            **crop_payload,
+        }
+
         return {
             "ui": {
                 "images_custom": [{
@@ -195,17 +203,53 @@ class OlmDragCrop:
                 }] if original_filename else [],
                 "crop_info": [crop_info_for_frontend]
             },
-            "result": (cropped_image, cropped_mask),
+            "result": (cropped_image, cropped_mask, crop_json),
         }
+
+
+class OlmCropInfoInterpreter:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "crop_json": ("STRING", {"default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("INT","INT","INT","INT","INT","INT","STRING","STRING")
+    RETURN_NAMES = ("left","top","right","bottom","width","height","csv","pretty")
+    FUNCTION = "interpret"
+    CATEGORY = "image/transform"
+
+    def interpret(self, crop_json: str):
+        try:
+            data = json.loads(crop_json) if crop_json else {}
+        except Exception:
+            data = {}
+
+        left   = int(data.get("left",   0))
+        top    = int(data.get("top",    0))
+        right  = int(data.get("right",  left))
+        bottom = int(data.get("bottom", top))
+        width  = int(data.get("width",  max(0, right - left)))
+        height = int(data.get("height", max(0, bottom - top)))
+
+        csv = f"{left},{top},{right},{bottom},{width},{height}"
+        pretty = f"left={left}, top={top}, right={right}, bottom={bottom}, width={width}, height={height}"
+
+        return (left, top, right, bottom, width, height, csv, pretty)
+
 
 
 NODE_CLASS_MAPPINGS = {
     "OlmDragCrop": OlmDragCrop,
+    "OlmCropInfoInterpreter": OlmCropInfoInterpreter,
 }
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "OlmDragCrop": "Olm Drag Crop",
+    "OlmCropInfoInterpreter": "Olm Crop Info → Values",
 }
 
 

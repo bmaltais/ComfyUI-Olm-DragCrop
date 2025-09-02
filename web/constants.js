@@ -21,7 +21,8 @@ export const colorOptions = [
 export const LAYOUT = {
   PADDING_X: 40,
   PADDING_Y: 10,
-  HEADER_H: 85,
+  CROPINFO_OFFSET: 70,
+  HEADER_H: 105,
   INSTRUCTIONS_H: 20,
   WIDGET_ROW_H: 25,
   PREVIEW_MIN_W: 160,

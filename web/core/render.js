@@ -1,6 +1,6 @@
 import { ColorUtils } from "../utils/colorUtils.js";
 import { MathUtils } from "../utils/mathUtils.js";
-import { GRAPHICS, TEXT, TEXTCONTENT } from "../constants.js";
+import { GRAPHICS, TEXT, TEXTCONTENT, LAYOUT } from "../constants.js";
 
 export function drawCropBox(
   ctx,
@@ -145,7 +145,7 @@ function drawCropIfAny(ctx, node, nodeCtx, preview) {
 }
 
 function drawCropInfo(ctx, node, nodeCtx, offsetY) {
-  const baseline = offsetY;
+  const baseline = offsetY + LAYOUT.CROPINFO_OFFSET;
   const lineGap = 14;
 
   ctx.save();
@@ -218,7 +218,7 @@ export function handleDrawForeground(node, ctx, widgetHeight, preview) {
   };
 
   drawPreviewBorder(ctx, preview);
-  drawCropInfo(ctx, node, nodeCtx, widgetHeight + 50);
+  drawCropInfo(ctx, node, nodeCtx, widgetHeight);
   drawSource(ctx, node, preview);
   drawCropIfAny(ctx, node, nodeCtx, preview);
   drawInstruction(ctx, node);
