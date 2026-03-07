@@ -1,3 +1,18 @@
+"""
+ComfyUI-Olm-DragCrop: Interactive image cropping and perspective correction nodes.
+
+This module provides three custom nodes for ComfyUI:
+- OlmDragCrop: Interactive crop box with drag handles for precise region selection
+- OlmDragPerspective: Perspective correction with corner dragging and curve warping
+- OlmCropInfoInterpreter: Helper node to extract crop coordinates from JSON output
+
+Features:
+- Paste/drop image input support (Ctrl+V, drag-and-drop)
+- Preview image caching for performance optimization
+- Optional opencv-python for advanced Coons patch warping
+- Real-time UI overlay rendering with snapping and aspect ratio controls
+"""
+
 import torch
 import numpy as np
 from PIL import Image
@@ -5,16 +20,52 @@ import os
 import folder_paths
 from folder_paths import get_temp_directory
 import json
+from collections import OrderedDict
 
 DEBUG_MODE = False
+
+
+class LRUCache(OrderedDict):
+    """
+    Simple LRU cache with automatic eviction of least-recently-used entries.
+
+    Prevents unbounded memory growth in long-running ComfyUI sessions where
+    workflows are created/deleted repeatedly, generating new node IDs that
+    would otherwise accumulate forever in module-level tracking dicts.
+    """
+
+    def __init__(self, max_size=1000):
+        super().__init__()
+        self.max_size = max_size
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)  # Mark as recently used
+        return value
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)  # Mark as recently used
+        super().__setitem__(key, value)
+        if len(self) > self.max_size:
+            oldest = next(iter(self))  # First key = oldest
+            del self[oldest]
+
+    def get(self, key, default=None):
+        """Override get() to also mark accessed entries as recently used."""
+        if key in self:
+            return self[key]  # Triggers __getitem__ which updates order
+        return default
+
 
 # Per-node-id memory of the last execution's image sources, keyed by node_id string.
 # Used to decide whether a wired input change should override a stale pasted_image.
 # Separate dicts per node class so IDs from different node types never collide.
-_persp_wire_hashes:   dict = {}   # OlmDragPerspective: node_id -> wire hash
-_persp_pasted_images: dict = {}   # OlmDragPerspective: node_id -> pasted_image filename
-_crop_wire_hashes:    dict = {}   # OlmDragCrop:        node_id -> wire hash
-_crop_pasted_images:  dict = {}   # OlmDragCrop:        node_id -> pasted_image filename
+# LRU eviction prevents memory leaks in long-running sessions.
+_persp_wire_hashes = LRUCache(1000)  # OlmDragPerspective: node_id -> wire hash
+_persp_pasted_images = LRUCache(1000)  # OlmDragPerspective: node_id -> pasted_image filename
+_crop_wire_hashes = LRUCache(1000)  # OlmDragCrop:        node_id -> wire hash
+_crop_pasted_images = LRUCache(1000)  # OlmDragCrop:        node_id -> pasted_image filename
 
 
 def debug_print(*args, **kwargs):
@@ -43,8 +94,8 @@ def _resolve_source_image(
     Updates wire_hashes and pasted_images in-place for the next run.
     Returns (source_image, clear_pasted_on_frontend, input_hash).
     """
-    wire_hash   = _compute_input_image_hash(image) if image is not None else ""
-    last_wire   = wire_hashes.get(nid, None)
+    wire_hash = _compute_input_image_hash(image) if image is not None else ""
+    last_wire = wire_hashes.get(nid, None)
     last_pasted = pasted_images.get(nid, "")
 
     pasted_fresh = bool(pasted_image) and (pasted_image != last_pasted)
@@ -72,12 +123,14 @@ def _resolve_source_image(
         )
 
     effective_pasted = pasted_image if not clear_pasted_on_frontend else ""
-    wire_hashes[nid]   = wire_hash
+    wire_hashes[nid] = wire_hash
     pasted_images[nid] = effective_pasted
 
     # Reuse the already-computed wire_hash when the wired image is selected;
     # only hash again when source_image is the pasted tensor.
-    input_hash = wire_hash if source_image is image else _compute_input_image_hash(source_image)
+    input_hash = (
+        wire_hash if source_image is image else _compute_input_image_hash(source_image)
+    )
     return source_image, clear_pasted_on_frontend, input_hash
 
 
@@ -104,8 +157,8 @@ def _compute_input_image_hash(image: torch.Tensor) -> str:
     natural-image change detection.
     """
     try:
-        frame = image[0]                      # (H, W, C) — stays on device
-        sample = frame[::8, ::8, :]           # strided view, no copy
+        frame = image[0]  # (H, W, C) — stays on device
+        sample = frame[::8, ::8, :]  # strided view, no copy
         total = sample.to(torch.float64).sum().item()  # one scalar to CPU
         return f"{image.shape}|{total:.8f}"
     except Exception as e:
@@ -123,12 +176,30 @@ def _load_uploaded_image_tensor(image_name: str):
         arr = np.array(im.convert("RGB")).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None,]
 
+
 class OlmDragCrop:
+    """Interactive image cropping node with drag handles for precise region selection.
+
+    Features:
+    - Canvas overlay with draggable crop box and corner/edge handles
+    - Aspect ratio locking and snapping to common ratios
+    - Supports wired IMAGE input or paste/drop (Ctrl+V, drag-and-drop)
+    - Real-time preview with automatic cache for unchanged inputs
+    - Outputs cropped image, mask, and crop coordinates as JSON
+
+    The crop box can be resized by dragging corners or edges, and the entire
+    box can be repositioned. When the input image changes resolution, the
+    crop automatically resets to the full image.
+    """
+
     @classmethod
     def INPUT_TYPES(cls):
         input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir)
-                 if os.path.isfile(os.path.join(input_dir, f))]
+        files = [
+            f
+            for f in os.listdir(input_dir)
+            if os.path.isfile(os.path.join(input_dir, f))
+        ]
         return {
             "required": {
                 "drawing_version": ("STRING", {"default": "init"}),
@@ -148,7 +219,7 @@ class OlmDragCrop:
             },
             "hidden": {
                 "node_id": "UNIQUE_ID",
-            }
+            },
         }
 
     @classmethod
@@ -181,26 +252,39 @@ class OlmDragCrop:
         debug_print("=" * 60)
         print(f"[OlmDragCrop] Node {node_id} executed (Backend)")
 
+        # Normalize None to empty string for optional pasted_image
+        if pasted_image is None:
+            pasted_image = ""
+
         nid = str(node_id) if node_id is not None else "__unknown__"
         source_image, clear_pasted_on_frontend, input_hash = _resolve_source_image(
-            image, pasted_image,
-            _crop_wire_hashes, _crop_pasted_images,
-            nid, "OlmDragCrop",
+            image,
+            pasted_image,
+            _crop_wire_hashes,
+            _crop_pasted_images,
+            nid,
+            "OlmDragCrop",
         )
 
         batch_size, current_height, current_width, channels = source_image.shape
 
         debug_print("\n[OlmDragCrop] [Input Image Info]")
-        debug_print(f"[OlmDragCrop] - Current image size: {current_width}x{current_height}")
+        debug_print(
+            f"[OlmDragCrop] - Current image size: {current_width}x{current_height}"
+        )
         debug_print(f"[OlmDragCrop] - Last image size:    {last_width}x{last_height}")
         debug_print(f"[OlmDragCrop] - Batch size: {batch_size}, Channels: {channels}")
 
-        resolution_changed = (current_width != last_width or current_height != last_height)
+        resolution_changed = (
+            current_width != last_width or current_height != last_height
+        )
         reset_frontend_crop = False
 
         if resolution_changed:
             debug_print("\n[OlmDragCrop] [Resolution Change Detected]")
-            debug_print("[OlmDragCrop] → Forcing full image crop and signaling frontend reset.")
+            debug_print(
+                "[OlmDragCrop] → Forcing full image crop and signaling frontend reset."
+            )
             crop_left = 0
             crop_top = 0
             crop_right = 0
@@ -222,9 +306,14 @@ class OlmDragCrop:
         computed_crop_right = crop_left + crop_width
         computed_crop_bottom = crop_top + crop_height
 
-        if (crop_left < 0 or crop_top < 0 or
-            computed_crop_right > current_width or computed_crop_bottom > current_height or
-            crop_width <= 0 or crop_height <= 0):
+        if (
+            crop_left < 0
+            or crop_top < 0
+            or computed_crop_right > current_width
+            or computed_crop_bottom > current_height
+            or crop_width <= 0
+            or crop_height <= 0
+        ):
             print("\n[OlmDragCrop] Error invalid crop area → Resetting to full image.")
             crop_left = 0
             crop_top = 0
@@ -236,14 +325,18 @@ class OlmDragCrop:
             computed_crop_bottom = crop_top + crop_height
             reset_frontend_crop = True
 
-        cropped_image = source_image[:, crop_top:computed_crop_bottom, crop_left:computed_crop_right, :]
+        cropped_image = source_image[
+            :, crop_top:computed_crop_bottom, crop_left:computed_crop_right, :
+        ]
 
         def _make_zero_mask(bs, h, w, device):
             return torch.zeros((bs, h, w), dtype=torch.float32, device=device)
 
         cropped_mask = None
         if mask is None or not torch.is_tensor(mask) or mask.numel() == 0:
-            cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, source_image.device)
+            cropped_mask = _make_zero_mask(
+                batch_size, crop_height, crop_width, source_image.device
+            )
         else:
             m = mask
 
@@ -253,7 +346,9 @@ class OlmDragCrop:
                 m = m.unsqueeze(0)
 
             if m.dim() != 3:
-                cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, source_image.device)
+                cropped_mask = _make_zero_mask(
+                    batch_size, crop_height, crop_width, source_image.device
+                )
             else:
                 if m.shape[0] != batch_size:
                     if m.shape[0] == 1 and batch_size > 1:
@@ -262,7 +357,9 @@ class OlmDragCrop:
                         if m.shape[0] > batch_size:
                             m = m[:batch_size]
                         else:
-                            m = m.repeat(int(np.ceil(batch_size / m.shape[0])), 1, 1)[:batch_size]
+                            m = m.repeat(int(np.ceil(batch_size / m.shape[0])), 1, 1)[
+                                :batch_size
+                            ]
 
                 mh, mw = m.shape[1], m.shape[2]
 
@@ -272,13 +369,16 @@ class OlmDragCrop:
                 cb = max(0, min(computed_crop_bottom, mh))
 
                 if cr <= cl or cb <= ct:
-                    cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, source_image.device)
+                    cropped_mask = _make_zero_mask(
+                        batch_size, crop_height, crop_width, source_image.device
+                    )
                 else:
                     region = m[:, ct:cb, cl:cr]
-                    cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, source_image.device)
+                    cropped_mask = _make_zero_mask(
+                        batch_size, crop_height, crop_width, source_image.device
+                    )
                     rh, rw = region.shape[1], region.shape[2]
                     cropped_mask[:, :rh, :rw] = region.to(torch.float32)
-
 
         debug_print(f"[OlmDragCrop] - Computed crop_right:  {computed_crop_right}")
         debug_print(f"[OlmDragCrop] - Computed crop_bottom: {computed_crop_bottom}")
@@ -291,6 +391,8 @@ class OlmDragCrop:
         debug_print(f"[OlmDragCrop] - Reset frontend crop UI: {reset_frontend_crop}")
         debug_print("=" * 60)
 
+        # Performance optimization: skip preview save when input unchanged.
+        # Avoids GPU→CPU transfer + numpy conversion + PIL encoding + disk I/O (~10-50ms).
         original_filename = None
         if batch_size > 0:
             temp_dir = get_temp_directory()
@@ -323,7 +425,7 @@ class OlmDragCrop:
             "height": crop_height,
             "original_size": [current_width, current_height],
             "cropped_size": [crop_width, crop_height],
-            "reset_crop_ui": reset_frontend_crop
+            "reset_crop_ui": reset_frontend_crop,
         }
 
         crop_json = json.dumps(crop_payload)
@@ -336,18 +438,30 @@ class OlmDragCrop:
 
         return {
             "ui": {
-                "images_custom": [{
-                    "filename": original_filename,
-                    "subfolder": "",
-                    "type": "temp"
-                }] if original_filename else [],
-                "crop_info": [crop_info_for_frontend]
+                "images_custom": (
+                    [{"filename": original_filename, "subfolder": "", "type": "temp"}]
+                    if original_filename
+                    else []
+                ),
+                "crop_info": [crop_info_for_frontend],
             },
             "result": (cropped_image, cropped_mask, crop_json),
         }
 
 
 class OlmCropInfoInterpreter:
+    """Helper node to extract crop coordinates from OlmDragCrop JSON output.
+
+    Parses the crop_json string produced by OlmDragCrop and outputs individual
+    integer values for left, top, right, bottom, width, height, plus formatted
+    strings (CSV and human-readable).
+
+    Useful for:
+    - Connecting crop coordinates to other nodes that need integer inputs
+    - Debugging crop values in workflow
+    - Converting crop data to different formats
+    """
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -356,8 +470,17 @@ class OlmCropInfoInterpreter:
             }
         }
 
-    RETURN_TYPES = ("INT","INT","INT","INT","INT","INT","STRING","STRING")
-    RETURN_NAMES = ("left","top","right","bottom","width","height","csv","pretty")
+    RETURN_TYPES = ("INT", "INT", "INT", "INT", "INT", "INT", "STRING", "STRING")
+    RETURN_NAMES = (
+        "left",
+        "top",
+        "right",
+        "bottom",
+        "width",
+        "height",
+        "csv",
+        "pretty",
+    )
     FUNCTION = "interpret"
     CATEGORY = "image/transform"
 
@@ -367,18 +490,17 @@ class OlmCropInfoInterpreter:
         except Exception:
             data = {}
 
-        left   = int(data.get("left",   0))
-        top    = int(data.get("top",    0))
-        right  = int(data.get("right",  left))
+        left = int(data.get("left", 0))
+        top = int(data.get("top", 0))
+        right = int(data.get("right", left))
         bottom = int(data.get("bottom", top))
-        width  = int(data.get("width",  max(0, right - left)))
+        width = int(data.get("width", max(0, right - left)))
         height = int(data.get("height", max(0, bottom - top)))
 
         csv = f"{left},{top},{right},{bottom},{width},{height}"
         pretty = f"left={left}, top={top}, right={right}, bottom={bottom}, width={width}, height={height}"
 
         return (left, top, right, bottom, width, height, csv, pretty)
-
 
 
 def _has_curves(bows):
@@ -418,45 +540,47 @@ def _compute_coons_maps(src_pts, bows, out_w, out_h):
 
     # Control points: midpoint of each edge + free 2D offset
     # Bottom edge uses BL→BR so it matches the top's left-to-right orientation
-    C_top    = _edge_control_point_xy(tl, tr, bows['top'][0],    bows['top'][1])
-    C_right  = _edge_control_point_xy(tr, br, bows['right'][0],  bows['right'][1])
-    C_bottom = _edge_control_point_xy(bl, br, bows['bottom'][0], bows['bottom'][1])
-    C_left   = _edge_control_point_xy(tl, bl, bows['left'][0],   bows['left'][1])
+    C_top = _edge_control_point_xy(tl, tr, bows["top"][0], bows["top"][1])
+    C_right = _edge_control_point_xy(tr, br, bows["right"][0], bows["right"][1])
+    C_bottom = _edge_control_point_xy(bl, br, bows["bottom"][0], bows["bottom"][1])
+    C_left = _edge_control_point_xy(tl, bl, bows["left"][0], bows["left"][1])
 
     us = np.linspace(0.0, 1.0, out_w, dtype=np.float32)  # (out_w,)
     vs = np.linspace(0.0, 1.0, out_h, dtype=np.float32)  # (out_h,)
-    U, V = np.meshgrid(us, vs)                            # (out_h, out_w)
+    U, V = np.meshgrid(us, vs)  # (out_h, out_w)
 
     def bezier2(p0, p1c, p2, t):
         """Quadratic bezier. t shape (N,) → returns (N, 2)."""
         t = t[:, None]
-        return (1 - t) ** 2 * p0 + 2 * t * (1 - t) * p1c + t ** 2 * p2
+        return (1 - t) ** 2 * p0 + 2 * t * (1 - t) * p1c + t**2 * p2
 
-    B_top    = bezier2(tl, C_top,    tr, us)  # (out_w, 2)
+    B_top = bezier2(tl, C_top, tr, us)  # (out_w, 2)
     B_bottom = bezier2(bl, C_bottom, br, us)  # (out_w, 2)
-    B_left   = bezier2(tl, C_left,  bl, vs)  # (out_h, 2)
-    B_right  = bezier2(tr, C_right, br, vs)  # (out_h, 2)
+    B_left = bezier2(tl, C_left, bl, vs)  # (out_h, 2)
+    B_right = bezier2(tr, C_right, br, vs)  # (out_h, 2)
 
     # Broadcast to (out_h, out_w, 2)
-    B_top_2d    = B_top[None, :, :]
+    B_top_2d = B_top[None, :, :]
     B_bottom_2d = B_bottom[None, :, :]
-    B_left_2d   = B_left[:, None, :]
-    B_right_2d  = B_right[:, None, :]
+    B_left_2d = B_left[:, None, :]
+    B_right_2d = B_right[:, None, :]
 
     U3 = U[:, :, None]
     V3 = V[:, :, None]
 
     bilinear = (
-        (1 - U3) * (1 - V3) * tl +
-        U3 * (1 - V3) * tr +
-        U3 * V3 * br +
-        (1 - U3) * V3 * bl
+        (1 - U3) * (1 - V3) * tl
+        + U3 * (1 - V3) * tr
+        + U3 * V3 * br
+        + (1 - U3) * V3 * bl
     )
 
     P = (
-        (1 - V3) * B_top_2d + V3 * B_bottom_2d +
-        (1 - U3) * B_left_2d + U3 * B_right_2d -
-        bilinear
+        (1 - V3) * B_top_2d
+        + V3 * B_bottom_2d
+        + (1 - U3) * B_left_2d
+        + U3 * B_right_2d
+        - bilinear
     )  # (out_h, out_w, 2)
 
     map_x = P[:, :, 0]
@@ -478,9 +602,9 @@ def _compute_perspective_coeffs(src_pts, dst_pts):
     A = []
     b = []
     for (sx, sy), (dx, dy) in zip(src_pts, dst_pts):
-        A.append([dx, dy, 1, 0,  0, 0, -dx * sx, -dy * sx])
+        A.append([dx, dy, 1, 0, 0, 0, -dx * sx, -dy * sx])
         b.append(sx)
-        A.append([0,  0, 0, dx, dy, 1, -dx * sy, -dy * sy])
+        A.append([0, 0, 0, dx, dy, 1, -dx * sy, -dy * sy])
         b.append(sy)
     A = np.array(A, dtype=np.float64)
     b = np.array(b, dtype=np.float64)
@@ -489,32 +613,54 @@ def _compute_perspective_coeffs(src_pts, dst_pts):
 
 
 class OlmDragPerspective:
+    """Perspective correction node with draggable corners and curve warping.
+
+    Features:
+    - Four corner handles to define a quadrilateral region in the source image
+    - Four edge curve handles (bow controls) for Coons patch warping
+    - Optional rotation (90° CW/CCW, 180°) applied before warping
+    - Supports wired IMAGE input or paste/drop (Ctrl+V, drag-and-drop)
+    - Real-time preview with automatic cache for unchanged inputs
+
+    When opencv-python is available, uses cv2.remap with Coons patch for
+    curved edge warping (bilinear quadratic bezier blending). Falls back to
+    PIL perspective transform for planar quads when cv2 is unavailable or
+    curves are disabled.
+
+    The output is a rectified image where the selected quadrilateral is
+    mapped to a rectangle, with dimensions computed from the quad edge lengths.
+    """
+
     @classmethod
     def INPUT_TYPES(cls):
         input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+        files = [
+            f
+            for f in os.listdir(input_dir)
+            if os.path.isfile(os.path.join(input_dir, f))
+        ]
         files = folder_paths.filter_files_content_types(files, ["image"])
         return {
             "required": {
                 "drawing_version": ("STRING", {"default": "init"}),
-                "tl_x": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
-                "tl_y": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
+                "tl_x": ("INT", {"default": 0, "min": -8192, "max": 8192}),
+                "tl_y": ("INT", {"default": 0, "min": -8192, "max": 8192}),
                 "tr_x": ("INT", {"default": 512, "min": -8192, "max": 8192}),
-                "tr_y": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
+                "tr_y": ("INT", {"default": 0, "min": -8192, "max": 8192}),
                 "br_x": ("INT", {"default": 512, "min": -8192, "max": 8192}),
                 "br_y": ("INT", {"default": 512, "min": -8192, "max": 8192}),
-                "bl_x": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
+                "bl_x": ("INT", {"default": 0, "min": -8192, "max": 8192}),
                 "bl_y": ("INT", {"default": 512, "min": -8192, "max": 8192}),
-                "last_width":  ("INT", {"default": 0}),
+                "last_width": ("INT", {"default": 0}),
                 "last_height": ("INT", {"default": 0}),
-                "top_bow_x":    ("INT", {"default": 0, "min": -4096, "max": 4096}),
-                "top_bow_y":    ("INT", {"default": 0, "min": -4096, "max": 4096}),
-                "right_bow_x":  ("INT", {"default": 0, "min": -4096, "max": 4096}),
-                "right_bow_y":  ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "top_bow_x": ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "top_bow_y": ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "right_bow_x": ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "right_bow_y": ("INT", {"default": 0, "min": -4096, "max": 4096}),
                 "bottom_bow_x": ("INT", {"default": 0, "min": -4096, "max": 4096}),
                 "bottom_bow_y": ("INT", {"default": 0, "min": -4096, "max": 4096}),
-                "left_bow_x":   ("INT", {"default": 0, "min": -4096, "max": 4096}),
-                "left_bow_y":   ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "left_bow_x": ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "left_bow_y": ("INT", {"default": 0, "min": -4096, "max": 4096}),
                 "rotate": (["None", "90° CW", "90° CCW", "180°"], {"default": "None"}),
             },
             "optional": {
@@ -523,7 +669,7 @@ class OlmDragPerspective:
             },
             "hidden": {
                 "node_id": "UNIQUE_ID",
-            }
+            },
         }
 
     RETURN_TYPES = ("IMAGE", "STRING")
@@ -542,16 +688,24 @@ class OlmDragPerspective:
     def correct(
         self,
         drawing_version,
-        tl_x: int, tl_y: int,
-        tr_x: int, tr_y: int,
-        br_x: int, br_y: int,
-        bl_x: int, bl_y: int,
+        tl_x: int,
+        tl_y: int,
+        tr_x: int,
+        tr_y: int,
+        br_x: int,
+        br_y: int,
+        bl_x: int,
+        bl_y: int,
         last_width: int = 0,
         last_height: int = 0,
-        top_bow_x: int = 0, top_bow_y: int = 0,
-        right_bow_x: int = 0, right_bow_y: int = 0,
-        bottom_bow_x: int = 0, bottom_bow_y: int = 0,
-        left_bow_x: int = 0, left_bow_y: int = 0,
+        top_bow_x: int = 0,
+        top_bow_y: int = 0,
+        right_bow_x: int = 0,
+        right_bow_y: int = 0,
+        bottom_bow_x: int = 0,
+        bottom_bow_y: int = 0,
+        left_bow_x: int = 0,
+        left_bow_y: int = 0,
         rotate: str = "None",
         image: torch.Tensor = None,
         pasted_image: str = "",
@@ -559,16 +713,25 @@ class OlmDragPerspective:
     ):
         print(f"[OlmDragPerspective] Node {node_id} executed (Backend)")
 
+        # Normalize None to empty string for optional pasted_image
+        if pasted_image is None:
+            pasted_image = ""
+
         nid = str(node_id) if node_id is not None else "__unknown__"
         source_image, clear_pasted_on_frontend, input_hash = _resolve_source_image(
-            image, pasted_image,
-            _persp_wire_hashes, _persp_pasted_images,
-            nid, "OlmDragPerspective",
+            image,
+            pasted_image,
+            _persp_wire_hashes,
+            _persp_pasted_images,
+            nid,
+            "OlmDragPerspective",
         )
 
         batch_size, current_height, current_width, channels = source_image.shape
 
-        resolution_changed = (current_width != last_width or current_height != last_height)
+        resolution_changed = (
+            current_width != last_width or current_height != last_height
+        )
         reset_quad_ui = False
 
         # Widget coordinates are stored in rotated space (what the user sees).
@@ -607,19 +770,19 @@ class OlmDragPerspective:
 
         # Compute output dimensions from the edge lengths of the quad
         (rtl_x, rtl_y), (rtr_x, rtr_y), (rbr_x, rbr_y), (rbl_x, rbl_y) = src_pts_warp
-        top_w    = np.sqrt((rtr_x - rtl_x) ** 2 + (rtr_y - rtl_y) ** 2)
+        top_w = np.sqrt((rtr_x - rtl_x) ** 2 + (rtr_y - rtl_y) ** 2)
         bottom_w = np.sqrt((rbr_x - rbl_x) ** 2 + (rbr_y - rbl_y) ** 2)
-        left_h   = np.sqrt((rbl_x - rtl_x) ** 2 + (rbl_y - rtl_y) ** 2)
-        right_h  = np.sqrt((rbr_x - rtr_x) ** 2 + (rbr_y - rtr_y) ** 2)
+        left_h = np.sqrt((rbl_x - rtl_x) ** 2 + (rbl_y - rtl_y) ** 2)
+        right_h = np.sqrt((rbr_x - rtr_x) ** 2 + (rbr_y - rtr_y) ** 2)
 
         out_w = max(1, int(max(top_w, bottom_w)))
         out_h = max(1, int(max(left_h, right_h)))
 
         dst_pts = [
-            [0,     0],
+            [0, 0],
             [out_w, 0],
             [out_w, out_h],
-            [0,     out_h],
+            [0, out_h],
         ]
 
         try:
@@ -634,10 +797,10 @@ class OlmDragPerspective:
             resample = Image.BICUBIC  # Pillow < 9.1
 
         bows = {
-            'top':    [top_bow_x,    top_bow_y],
-            'right':  [right_bow_x,  right_bow_y],
-            'bottom': [bottom_bow_x, bottom_bow_y],
-            'left':   [left_bow_x,   left_bow_y],
+            "top": [top_bow_x, top_bow_y],
+            "right": [right_bow_x, right_bow_y],
+            "bottom": [bottom_bow_x, bottom_bow_y],
+            "left": [left_bow_x, left_bow_y],
         }
         use_curves = _has_curves(bows)
 
@@ -668,9 +831,12 @@ class OlmDragPerspective:
             if use_curves and coons_map_x is not None:
                 try:
                     import cv2
+
                     # Pass float32 directly — skips the uint8 round-trip entirely
                     warped = cv2.remap(
-                        frame, coons_map_x, coons_map_y,
+                        frame,
+                        coons_map_x,
+                        coons_map_y,
                         cv2.INTER_CUBIC,
                         borderMode=cv2.BORDER_CONSTANT,
                         borderValue=0,
@@ -733,10 +899,10 @@ class OlmDragPerspective:
             "br": [br_x, br_y],
             "bl": [bl_x, bl_y],
             "bows": {
-                "top":    [top_bow_x,    top_bow_y],
-                "right":  [right_bow_x,  right_bow_y],
+                "top": [top_bow_x, top_bow_y],
+                "right": [right_bow_x, right_bow_y],
                 "bottom": [bottom_bow_x, bottom_bow_y],
-                "left":   [left_bow_x,   left_bow_y],
+                "left": [left_bow_x, left_bow_y],
             },
             "out_width": out_w,
             "out_height": out_h,
@@ -750,11 +916,11 @@ class OlmDragPerspective:
 
         return {
             "ui": {
-                "images_custom": [{
-                    "filename": original_filename,
-                    "subfolder": "",
-                    "type": "temp"
-                }] if original_filename else [],
+                "images_custom": (
+                    [{"filename": original_filename, "subfolder": "", "type": "temp"}]
+                    if original_filename
+                    else []
+                ),
                 "persp_info": [persp_payload],
             },
             "result": (output_image, persp_json),
