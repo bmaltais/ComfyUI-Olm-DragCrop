@@ -1,3 +1,17 @@
+"""
+ComfyUI-Olm-DragCrop: Interactive image cropping and perspective correction nodes.
+
+This module provides three custom nodes for ComfyUI:
+- OlmDragCrop: Interactive crop box with drag handles for precise region selection
+- OlmDragPerspective: Perspective correction with corner dragging and curve warping
+- OlmCropInfoInterpreter: Helper node to extract crop coordinates from JSON output
+
+Features:
+- Paste/drop image input support (Ctrl+V, drag-and-drop)
+- Preview image caching for performance optimization
+- Optional opencv-python for advanced Coons patch warping
+- Real-time UI overlay rendering with snapping and aspect ratio controls
+"""
 import torch
 import numpy as np
 from PIL import Image
