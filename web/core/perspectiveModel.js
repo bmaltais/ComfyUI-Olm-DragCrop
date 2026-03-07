@@ -1,4 +1,3 @@
-import { commitState } from "./commitState.js";
 import { setWidgetValue, getWidget } from "../utils/nodeUtils.js";
 import { clamp } from "../utils/geometryUtils.js";
 import { CANVAS_EXTEND_MAP } from "../constants.js";
