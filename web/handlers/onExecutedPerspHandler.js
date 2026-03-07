@@ -1,6 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { commitState } from "../core/commitState.js";
-import { getPreviewAreaCached, computeNodeSize } from "../ui/nodeLayout.js";
+import { getPreviewAreaCached } from "../ui/nodeLayout.js";
 import { getWidget, setWidgetValue } from "../utils/nodeUtils.js";
 import {
   resetCorners,
@@ -130,7 +129,6 @@ export function handleOnExecutedPersp(node, message) {
       if (pastedWidget) pastedWidget.value = "";
     }
 
-    commitState(node);
     node.setDirtyCanvas(true);
   };
 
