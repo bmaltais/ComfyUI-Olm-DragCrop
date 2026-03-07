@@ -205,6 +205,17 @@ def _preview_filename_hash(input_hash: str) -> str:
     return hashlib.sha1(input_hash.encode("utf-8")).hexdigest()
 
 
+def _sanitize_node_id(node_id: str) -> str:
+    """
+    Sanitize the node_id for use in filenames and cache keys.
+    Allows only alphanumeric characters, underscores, and hyphens.
+    """
+    if node_id is None:
+        return "unknown"
+    nid = str(node_id)
+    return "".join(c for c in nid if c.isalnum() or c in ("_", "-"))
+
+
 class OlmDragCrop:
     """Interactive image cropping node with drag handles for precise region selection.
 
@@ -284,7 +295,7 @@ class OlmDragCrop:
         if pasted_image is None:
             pasted_image = ""
 
-        nid = str(node_id) if node_id is not None else "__unknown__"
+        nid = _sanitize_node_id(node_id)
         source_image, clear_pasted_on_frontend, input_hash = _resolve_source_image(
             image,
             pasted_image,
@@ -767,7 +778,7 @@ class OlmDragPerspective:
         if pasted_image is None:
             pasted_image = ""
 
-        nid = str(node_id) if node_id is not None else "__unknown__"
+        nid = _sanitize_node_id(node_id)
         source_image, clear_pasted_on_frontend, input_hash = _resolve_source_image(
             image,
             pasted_image,
