@@ -4,12 +4,30 @@ from PIL import Image
 import os
 from folder_paths import get_temp_directory
 import json
+import hashlib
 
 DEBUG_MODE = False
 
 def debug_print(*args, **kwargs):
     if DEBUG_MODE:
         print(*args, **kwargs)
+
+
+def _compute_input_image_hash(image: torch.Tensor) -> str:
+    """
+    Compute a stable SHA-256 hash for the full input tensor.
+    Quantizing to uint8 keeps the hash aligned with effective image pixels.
+    """
+    try:
+        arr = image.detach().cpu().numpy()
+        arr_u8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+        h = hashlib.sha256()
+        h.update(str(arr_u8.shape).encode("utf-8"))
+        h.update(arr_u8.tobytes())
+        return h.hexdigest()
+    except Exception as e:
+        print(f"[OlmDrag] Failed to compute input image hash: {e}")
+        return ""
 
 class OlmDragCrop:
     @classmethod
@@ -57,6 +75,8 @@ class OlmDragCrop:
     ):
         debug_print("=" * 60)
         print(f"[OlmDragCrop] Node {node_id} executed (Backend)")
+
+        input_hash = _compute_input_image_hash(image)
 
         batch_size, current_height, current_width, channels = image.shape
 
@@ -192,6 +212,7 @@ class OlmDragCrop:
 
         crop_info_for_frontend = {
             **crop_payload,
+            "input_hash": input_hash,
         }
 
         return {
@@ -453,6 +474,8 @@ class OlmDragPerspective:
     ):
         print(f"[OlmDragPerspective] Node {node_id} executed (Backend)")
 
+        input_hash = _compute_input_image_hash(image)
+
         batch_size, current_height, current_width, channels = image.shape
 
         resolution_changed = (current_width != last_width or current_height != last_height)
@@ -609,6 +632,7 @@ class OlmDragPerspective:
             "out_height": out_h,
             "original_size": [current_width, current_height],
             "reset_quad_ui": reset_quad_ui,
+            "input_hash": input_hash,
         }
 
         persp_json = json.dumps(persp_payload)

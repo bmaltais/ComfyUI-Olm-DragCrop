@@ -35,9 +35,20 @@ export function handleOnExecutedPersp(node, message) {
     const lastResolution    = node.properties.lastResolution || null;
     const resolutionChanged = lastResolution !== resolutionId;
 
+    // Track image identifier to detect new image inputs
+    const imageId = `${imageInfo.filename}|${imageInfo.subfolder || ""}|${imageInfo.type}`;
+    const lastImageId = node.properties.lastImageId || null;
+    const imageChanged = lastImageId !== imageId;
+
+    const inputHash = backendData?.input_hash || "";
+    const lastInputHash = node.properties.lastInputHash || "";
+    const hashChanged = !!inputHash && inputHash !== lastInputHash;
+
     node.properties.actualImageWidth  = newWidth;
     node.properties.actualImageHeight = newHeight;
     node.properties.lastResolution    = resolutionId;
+    node.properties.lastImageId = imageId;
+    node.properties.lastInputHash = inputHash;
 
     const last_width_widget = getWidget(node, "last_width");
     if (last_width_widget) last_width_widget.value = newWidth;
@@ -45,7 +56,7 @@ export function handleOnExecutedPersp(node, message) {
     const last_height_widget = getWidget(node, "last_height");
     if (last_height_widget) last_height_widget.value = newHeight;
 
-    if (resolutionChanged || shouldReset) {
+    if (resolutionChanged || shouldReset || imageChanged || hashChanged) {
       if (node.onResize) node.onResize(node.size);
 
       const newSize = node.computeSize();
@@ -57,7 +68,14 @@ export function handleOnExecutedPersp(node, message) {
     node._previewAreaCache = null;
     const preview = getPreviewAreaCached(node);
 
-    if (shouldReset || resolutionChanged) {
+    if (shouldReset || resolutionChanged || imageChanged || hashChanged) {
+      // Reset transform settings (canvas extend and rotation) on new image
+      node.properties.canvasExtendLabel = "None";
+      const extendWidget = getWidget(node, "Canvas Extend");
+      if (extendWidget) extendWidget.value = "None";
+      const rotateWidget = getWidget(node, "rotate");
+      if (rotateWidget) rotateWidget.value = "None";
+      
       resetCorners(node, preview);
     } else if (backendData) {
       // Restore source-space corner widgets, then map to preview using
