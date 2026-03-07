@@ -319,6 +319,13 @@ app.registerExtension({
           if (originalCallback) {
             originalCallback.call(this, value);
           }
+          // Update last_rotate widget and property to prevent reset on next execution
+          const lastRotateWidget = node.widgets?.find((w) => w.name === "last_rotate");
+          if (lastRotateWidget) {
+            lastRotateWidget.value = value;
+          }
+          node.properties.lastRotate = value;
+          
           // Reset corners to fit the rotated image dimensions
           const preview = getPreviewAreaCached(node);
           resetCorners(node, preview);
