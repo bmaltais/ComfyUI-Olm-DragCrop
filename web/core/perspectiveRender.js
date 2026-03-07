@@ -1,6 +1,6 @@
 import { ColorUtils } from "../utils/colorUtils.js";
-import { GRAPHICS, TEXT, TEXTCONTENT, LAYOUT } from "../constants.js";
-import { computeOutputDimensions, getImageAreaInPreview, getBowHandlePositions } from "./perspectiveModel.js";
+import { GRAPHICS, TEXT, LAYOUT } from "../constants.js";
+import { getImageAreaInPreview, getBowHandlePositions } from "./perspectiveModel.js";
 
 /**
  * Draw the perspective quad overlay:
