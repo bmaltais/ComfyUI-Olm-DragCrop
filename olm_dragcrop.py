@@ -222,6 +222,10 @@ class OlmDragCrop:
         debug_print("=" * 60)
         print(f"[OlmDragCrop] Node {node_id} executed (Backend)")
 
+        # Normalize None to empty string for optional pasted_image
+        if pasted_image is None:
+            pasted_image = ""
+
         nid = str(node_id) if node_id is not None else "__unknown__"
         source_image, clear_pasted_on_frontend, input_hash = _resolve_source_image(
             image,
@@ -674,6 +678,10 @@ class OlmDragPerspective:
         node_id=None,
     ):
         print(f"[OlmDragPerspective] Node {node_id} executed (Backend)")
+
+        # Normalize None to empty string for optional pasted_image
+        if pasted_image is None:
+            pasted_image = ""
 
         nid = str(node_id) if node_id is not None else "__unknown__"
         source_image, clear_pasted_on_frontend, input_hash = _resolve_source_image(
