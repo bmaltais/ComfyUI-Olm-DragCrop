@@ -3,7 +3,6 @@ import { handleDrawForegroundPersp } from "./core/perspectiveRender.js";
 import { handleOnExecutedPersp } from "./handlers/onExecutedPerspHandler.js";
 import { getWidget, hideWidget, removePerspInputs } from "./utils/nodeUtils.js";
 import { clamp } from "./utils/geometryUtils.js";
-import { commitState } from "./core/commitState.js";
 import {
   computeNodeSize,
   getPreviewAreaCached,
@@ -106,7 +105,6 @@ app.registerExtension({
       node.addWidget("button", TEXTCONTENT.forceRefreshWidget, "refresh", () => {
         const dv = getWidget(node, "drawing_version");
         if (dv) dv.value = Date.now();
-        commitState(node);
         node.setDirtyCanvas(true);
       });
 
@@ -118,7 +116,6 @@ app.registerExtension({
         () => {
           node.properties.infoDisplayEnabled = !node.properties.infoDisplayEnabled;
           node._updateInfoToggleLabel();
-          commitState(node);
           node.setDirtyCanvas(true);
         }
       );
@@ -136,7 +133,6 @@ app.registerExtension({
           const selected = colorOptions.find((o) => o.name === value);
           if (selected) {
             node.properties.box_color = selected.value;
-            commitState(node);
             node.setDirtyCanvas(true);
           }
         },
@@ -155,7 +151,6 @@ app.registerExtension({
           if (node.properties.perspCorners) {
             updateCornersFromWidgets(node, preview);
           }
-          commitState(node);
           node.setDirtyCanvas(true);
         },
         { values: CANVAS_EXTEND_OPTIONS }
@@ -176,7 +171,6 @@ app.registerExtension({
             if (rotateWidget) rotateWidget.value = "None";
             const preview = getPreviewAreaCached(node);
             resetCorners(node, preview);
-            commitState(node);
             node.setDirtyCanvas(true);
           }
         );
@@ -295,7 +289,6 @@ app.registerExtension({
       node.dragging       = false;
       node.draggingCorner = null;
       node.draggingBow    = null;
-      commitState(node);
       node.setDirtyCanvas(true);
       return true;
     }
@@ -447,7 +440,6 @@ app.registerExtension({
         // since we already reset them here and the user may have adjusted them.
         node.properties._preserveCorners = true;
 
-        commitState(node);
         node.setDirtyCanvas(true, true);
       };
       node.image.onerror = (err) => {
@@ -487,7 +479,6 @@ app.registerExtension({
 
       showUploadedPreview(node, uploadedName);
 
-      commitState(node);
       node.setDirtyCanvas(true, true);
       return true;
     }
@@ -508,7 +499,6 @@ app.registerExtension({
 
       const preview = getPreviewAreaCached(node);
       resetCorners(node, preview);
-      commitState(node);
       node.setDirtyCanvas(true);
     };
 
@@ -566,8 +556,6 @@ app.registerExtension({
           pastedWidget.value = "";
         }
       }
-
-      commitState(node);
     };
 
     nodeType.prototype.onAdded = function () {
