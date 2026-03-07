@@ -335,7 +335,6 @@ function showUploadedPreview(node, uploadedPath) {
         // since the user may have already adjusted them after the drop
         node.properties._preserveCorners = true;
 
-        commitState(node);
         node.setDirtyCanvas(true, true);
     };
 
@@ -405,7 +404,6 @@ export function handleOnExecutedPersp(node, message) {
             if (pastedWidget) pastedWidget.value = "";
         }
 
-        commitState(node);
         node.setDirtyCanvas(true);
     };
 }
