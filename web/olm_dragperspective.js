@@ -14,6 +14,11 @@ import {
   resetCorners,
   updateCornersFromWidgets,
   updateWidgetsFromCorners,
+  initBows,
+  getBowHandleHit,
+  updateWidgetsFromBows,
+  updateBowsFromWidgets,
+  applyBowDrag,
 } from "./core/perspectiveModel.js";
 import {
   DEFAULT_SIZE,
@@ -40,6 +45,7 @@ app.registerExtension({
 
       const defaults = {
         perspCorners: null,
+        perspBows: null,
         actualImageWidth:  DEFAULT_SIZE,
         actualImageHeight: DEFAULT_SIZE,
         infoDisplayEnabled: true,
@@ -54,12 +60,18 @@ app.registerExtension({
           node.properties[key] = defaults[key];
         }
       }
+      // Ensure bows always has a valid object
+      if (!node.properties.perspBows) {
+        node.properties.perspBows = initBows();
+      }
 
       node.image = new Image();
       node.image.src = "";
-      node.imageLoaded   = false;
-      node.dragging      = false;
+      node.imageLoaded    = false;
+      node.dragging       = false;
       node.draggingCorner = null; // "tl"|"tr"|"br"|"bl"
+      node.draggingBow    = null; // "top"|"right"|"bottom"|"left"
+      node.hoveringBow    = null; // "top"|"right"|"bottom"|"left"
     }
 
     // -------------------------------------------------------------------------
@@ -73,6 +85,8 @@ app.registerExtension({
         "tr_x", "tr_y",
         "br_x", "br_y",
         "bl_x", "bl_y",
+        "top_bow_x", "top_bow_y", "right_bow_x", "right_bow_y",
+        "bottom_bow_x", "bottom_bow_y", "left_bow_x", "left_bow_y",
       ];
       for (const name of hidden) {
         const w = getWidget(node, name);
@@ -143,16 +157,19 @@ app.registerExtension({
         { values: CANVAS_EXTEND_OPTIONS }
       );
 
-      // Reset Perspective
-      node.addWidget("button", "Reset Perspective", "reset_persp", () => {
+      // Reset Transform
+      node.addWidget("button", "Reset Transform", "reset_persp", () => {
         showConfirmDialog(
-          "Reset perspective corners to the full image?",
+          "Reset perspective corners and rotation to defaults?",
           (confirmed) => {
             if (!confirmed) return;
             // Reset canvas extend to None
             node.properties.canvasExtendLabel = "None";
             const extendWidget = node.widgets?.find((w) => w.name === "Canvas Extend");
             if (extendWidget) extendWidget.value = "None";
+            // Reset rotation to None
+            const rotateWidget = node.widgets?.find((w) => w.name === "rotate");
+            if (rotateWidget) rotateWidget.value = "None";
             const preview = getPreviewAreaCached(node);
             resetCorners(node, preview);
             commitState(node);
@@ -178,7 +195,7 @@ app.registerExtension({
       const mousePos  = [e.canvasX, e.canvasY];
       const localPos  = getPreviewLocalPos(node.pos, mousePos, preview);
 
-      // Only handle clicks inside the preview area
+      // Only handle clicks inside the preview area (with 12px tolerance)
       if (
         localPos.x < -12 || localPos.y < -12 ||
         localPos.x > preview.width + 12 || localPos.y > preview.height + 12
@@ -186,19 +203,39 @@ app.registerExtension({
         return false;
       }
 
-      const hit = getCornerHit(node.properties.perspCorners, localPos);
-      if (hit) {
-        node.dragging      = true;
-        node.draggingCorner = hit;
+      // Corner handles take priority
+      const cornerHit = getCornerHit(node.properties.perspCorners, localPos);
+      if (cornerHit) {
+        node.dragging       = true;
+        node.draggingCorner = cornerHit;
+        node.draggingBow    = null;
         node.setDirtyCanvas(true);
         return true;
       }
+
+      // Bow (edge midpoint) handles
+      const bows = node.properties.perspBows || initBows();
+      const bowHit = getBowHandleHit(
+        node,
+        preview,
+        node.properties.perspCorners,
+        bows,
+        localPos
+      );
+      if (bowHit) {
+        node.dragging       = true;
+        node.draggingCorner = null;
+        node.draggingBow    = bowHit;
+        node.setDirtyCanvas(true);
+        return true;
+      }
+
       return false;
     }
 
     function onPerspMouseMove(node, e, pos, preview) {
-      if (!node.dragging || !node.draggingCorner) return false;
-      if (e.buttons !== 1) {
+      // Release drag if mouse button was released outside
+      if (node.dragging && e.buttons !== 1) {
         onPerspMouseUp(node, e, pos, preview);
         return false;
       }
@@ -206,20 +243,54 @@ app.registerExtension({
       const mousePos = [e.canvasX, e.canvasY];
       const localPos = getPreviewLocalPos(node.pos, mousePos, preview);
 
-      // Clamp to preview bounds
-      const cx = clamp(localPos.x, 0, preview.width);
-      const cy = clamp(localPos.y, 0, preview.height);
+      // Bow dragging
+      if (node.dragging && node.draggingBow) {
+        applyBowDrag(
+          node,
+          preview,
+          node.draggingBow,
+          localPos,
+          node.properties.perspCorners
+        );
+        updateWidgetsFromBows(node);
+        node.setDirtyCanvas(true);
+        return true;
+      }
 
-      node.properties.perspCorners[node.draggingCorner] = [cx, cy];
-      updateWidgetsFromCorners(node, preview);
-      node.setDirtyCanvas(true);
-      return true;
+      // Corner dragging
+      if (node.dragging && node.draggingCorner) {
+        const cx = clamp(localPos.x, 0, preview.width);
+        const cy = clamp(localPos.y, 0, preview.height);
+        node.properties.perspCorners[node.draggingCorner] = [cx, cy];
+        updateWidgetsFromCorners(node, preview);
+        node.setDirtyCanvas(true);
+        return true;
+      }
+
+      // Not dragging — track hover over bow handles for visual feedback
+      if (node.properties.perspCorners && node.properties.perspBows) {
+        const bows = node.properties.perspBows;
+        const prevHover = node.hoveringBow;
+        node.hoveringBow = getBowHandleHit(
+          node,
+          preview,
+          node.properties.perspCorners,
+          bows,
+          localPos
+        );
+        if (prevHover !== node.hoveringBow) {
+          node.setDirtyCanvas(true);
+        }
+      }
+
+      return false;
     }
 
     function onPerspMouseUp(node, e, pos, preview) {
       if (!node.dragging) return false;
-      node.dragging      = false;
+      node.dragging       = false;
       node.draggingCorner = null;
+      node.draggingBow    = null;
       commitState(node);
       node.setDirtyCanvas(true);
       return true;
@@ -258,6 +329,13 @@ app.registerExtension({
     nodeType.prototype.onConfigure = function () {
       const node = this;
 
+      // Guard: old saved workflows won't have a valid value for the rotate widget
+      const rotateWidget = node.widgets?.find((w) => w.name === "rotate");
+      const validRotate = ["None", "90° CW", "90° CCW", "180°"];
+      if (rotateWidget && !validRotate.includes(rotateWidget.value)) {
+        rotateWidget.value = "None";
+      }
+
       // Sync canvasExtendLabel from the serialized combo widget value
       const extendWidget = node.widgets?.find((w) => w.name === "Canvas Extend");
       if (extendWidget && extendWidget.value) {
@@ -269,6 +347,13 @@ app.registerExtension({
       if (node.properties.perspCorners) {
         updateCornersFromWidgets(node, preview);
       }
+
+      // Restore bow values from widgets
+      updateBowsFromWidgets(node);
+      if (!node.properties.perspBows) {
+        node.properties.perspBows = initBows();
+      }
+
       const dv = getWidget(node, "drawing_version");
       if (dv) dv.value = Date.now();
       node._updateInfoToggleLabel();

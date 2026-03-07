@@ -1,12 +1,12 @@
 import { app } from "../../../scripts/app.js";
 import { commitState } from "../core/commitState.js";
 import { getPreviewAreaCached, computeNodeSize } from "../ui/nodeLayout.js";
-import { getWidget } from "../utils/nodeUtils.js";
+import { getWidget, setWidgetValue } from "../utils/nodeUtils.js";
 import {
   resetCorners,
   updateCornersFromWidgets,
   updateWidgetsFromCorners,
-  getImageAreaInPreview,
+  updateWidgetsFromBows,
 } from "../core/perspectiveModel.js";
 
 export function handleOnExecutedPersp(node, message) {
@@ -60,18 +60,31 @@ export function handleOnExecutedPersp(node, message) {
     if (shouldReset || resolutionChanged) {
       resetCorners(node, preview);
     } else if (backendData) {
-      // Restore corners from backend pixel values, accounting for canvas extend
-      const imgArea = getImageAreaInPreview(node, preview);
-      const sx = imgArea.width  / newWidth;
-      const sy = imgArea.height / newHeight;
+      // Restore source-space corner widgets, then map to preview using
+      // rotation-aware conversion in updateCornersFromWidgets.
+      setWidgetValue(node, "tl_x", backendData.tl[0]);
+      setWidgetValue(node, "tl_y", backendData.tl[1]);
+      setWidgetValue(node, "tr_x", backendData.tr[0]);
+      setWidgetValue(node, "tr_y", backendData.tr[1]);
+      setWidgetValue(node, "br_x", backendData.br[0]);
+      setWidgetValue(node, "br_y", backendData.br[1]);
+      setWidgetValue(node, "bl_x", backendData.bl[0]);
+      setWidgetValue(node, "bl_y", backendData.bl[1]);
 
-      node.properties.perspCorners = {
-        tl: [backendData.tl[0] * sx + imgArea.x, backendData.tl[1] * sy + imgArea.y],
-        tr: [backendData.tr[0] * sx + imgArea.x, backendData.tr[1] * sy + imgArea.y],
-        br: [backendData.br[0] * sx + imgArea.x, backendData.br[1] * sy + imgArea.y],
-        bl: [backendData.bl[0] * sx + imgArea.x, backendData.bl[1] * sy + imgArea.y],
-      };
+      updateCornersFromWidgets(node, preview);
       updateWidgetsFromCorners(node, preview);
+
+      // Restore bow values from backend payload (deep-copy the [x,y] arrays)
+      if (backendData.bows) {
+        const b = backendData.bows;
+        node.properties.perspBows = {
+          top:    [...b.top],
+          right:  [...b.right],
+          bottom: [...b.bottom],
+          left:   [...b.left],
+        };
+        updateWidgetsFromBows(node);
+      }
     }
 
     // Cache the computed output size for display in the info panel

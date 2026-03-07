@@ -241,6 +241,89 @@ class OlmCropInfoInterpreter:
 
 
 
+def _has_curves(bows):
+    """Return True if any bow [x,y] offset is non-zero."""
+    return any(abs(v) > 0.5 for xy in bows.values() for v in xy)
+
+
+def _edge_control_point_xy(p1, p2, bow_x, bow_y):
+    """Quadratic bezier control point = edge midpoint + free 2D offset (bow_x, bow_y)."""
+    mx, my = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
+    return np.array([mx + bow_x, my + bow_y])
+
+
+def _compute_coons_maps(src_pts, bows, out_w, out_h):
+    """
+    Compute cv2.remap source maps for a bilinear Coons patch warp with curved edges.
+
+    Each edge is a quadratic bezier defined by two corner endpoints and a control point
+    at edge_midpoint + [bow_x, bow_y] (free 2D offset in image pixels).
+
+    Coons patch formula:
+        P(u,v) = (1-v)*B_top(u) + v*B_bottom(u)
+               + (1-u)*B_left(v) + u*B_right(v)
+               - bilinear_corner_blend(u,v)
+
+    Returns (map_x, map_y) as float32 arrays, or None if cv2 is unavailable.
+    """
+    try:
+        import cv2  # noqa: F401
+    except ImportError:
+        return None
+
+    tl = np.array(src_pts[0], dtype=np.float64)
+    tr = np.array(src_pts[1], dtype=np.float64)
+    br = np.array(src_pts[2], dtype=np.float64)
+    bl = np.array(src_pts[3], dtype=np.float64)
+
+    # Control points: midpoint of each edge + free 2D offset
+    # Bottom edge uses BL→BR so it matches the top's left-to-right orientation
+    C_top    = _edge_control_point_xy(tl, tr, bows['top'][0],    bows['top'][1])
+    C_right  = _edge_control_point_xy(tr, br, bows['right'][0],  bows['right'][1])
+    C_bottom = _edge_control_point_xy(bl, br, bows['bottom'][0], bows['bottom'][1])
+    C_left   = _edge_control_point_xy(tl, bl, bows['left'][0],   bows['left'][1])
+
+    us = np.linspace(0.0, 1.0, out_w, dtype=np.float64)  # (out_w,)
+    vs = np.linspace(0.0, 1.0, out_h, dtype=np.float64)  # (out_h,)
+    U, V = np.meshgrid(us, vs)                            # (out_h, out_w)
+
+    def bezier2(p0, p1c, p2, t):
+        """Quadratic bezier. t shape (N,) → returns (N, 2)."""
+        t = t[:, None]
+        return (1 - t) ** 2 * p0 + 2 * t * (1 - t) * p1c + t ** 2 * p2
+
+    B_top    = bezier2(tl, C_top,    tr, us)  # (out_w, 2)
+    B_bottom = bezier2(bl, C_bottom, br, us)  # (out_w, 2)
+    B_left   = bezier2(tl, C_left,  bl, vs)  # (out_h, 2)
+    B_right  = bezier2(tr, C_right, br, vs)  # (out_h, 2)
+
+    # Broadcast to (out_h, out_w, 2)
+    B_top_2d    = B_top[None, :, :]
+    B_bottom_2d = B_bottom[None, :, :]
+    B_left_2d   = B_left[:, None, :]
+    B_right_2d  = B_right[:, None, :]
+
+    U3 = U[:, :, None]
+    V3 = V[:, :, None]
+
+    bilinear = (
+        (1 - U3) * (1 - V3) * tl +
+        U3 * (1 - V3) * tr +
+        U3 * V3 * br +
+        (1 - U3) * V3 * bl
+    )
+
+    P = (
+        (1 - V3) * B_top_2d + V3 * B_bottom_2d +
+        (1 - U3) * B_left_2d + U3 * B_right_2d -
+        bilinear
+    )  # (out_h, out_w, 2)
+
+    map_x = P[:, :, 0].astype(np.float32)
+    map_y = P[:, :, 1].astype(np.float32)
+    return map_x, map_y
+
+
 def _compute_perspective_coeffs(src_pts, dst_pts):
     """
     Compute PIL perspective transform coefficients.
@@ -265,6 +348,55 @@ def _compute_perspective_coeffs(src_pts, dst_pts):
     return coeffs.tolist()
 
 
+def _rotate_point(x, y, w, h, rotate):
+    """Map a point from unrotated image space into rotated image space."""
+    if rotate == "90° CW":
+        return [h - y, x]
+    if rotate == "90° CCW":
+        return [y, w - x]
+    if rotate == "180°":
+        return [w - x, h - y]
+    return [x, y]
+
+
+def _prepare_rotated_geometry(src_pts, width, height, rotate):
+    """
+    Return (rotated_src_pts, rotate_k).
+    rotate_k is np.rot90 k value (counter-clockwise rotations).
+    """
+    rotate_k = 0
+    if rotate == "90° CW":
+        rotate_k = 3
+    elif rotate == "90° CCW":
+        rotate_k = 1
+    elif rotate == "180°":
+        rotate_k = 2
+
+    if rotate_k == 0:
+        return src_pts, rotate_k
+
+    rotated_pts = [
+        _rotate_point(x, y, width, height, rotate)
+        for x, y in src_pts
+    ]
+
+    # Re-label rotated points back to canonical [tl, tr, br, bl] order.
+    # src_pts is ordered [tl, tr, br, bl] in the unrotated image.
+    if rotate == "90° CW":
+        # old bl -> new tl, old tl -> new tr, old tr -> new br, old br -> new bl
+        rotated_src_pts = [rotated_pts[3], rotated_pts[0], rotated_pts[1], rotated_pts[2]]
+    elif rotate == "90° CCW":
+        # old tr -> new tl, old br -> new tr, old bl -> new br, old tl -> new bl
+        rotated_src_pts = [rotated_pts[1], rotated_pts[2], rotated_pts[3], rotated_pts[0]]
+    elif rotate == "180°":
+        # old br -> new tl, old bl -> new tr, old tl -> new br, old tr -> new bl
+        rotated_src_pts = [rotated_pts[2], rotated_pts[3], rotated_pts[0], rotated_pts[1]]
+    else:
+        rotated_src_pts = rotated_pts
+
+    return rotated_src_pts, rotate_k
+
+
 class OlmDragPerspective:
     @classmethod
     def INPUT_TYPES(cls):
@@ -282,6 +414,15 @@ class OlmDragPerspective:
                 "bl_y": ("INT", {"default": 512, "min": -8192, "max": 8192}),
                 "last_width":  ("INT", {"default": 0}),
                 "last_height": ("INT", {"default": 0}),
+                "top_bow_x":    ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "top_bow_y":    ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "right_bow_x":  ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "right_bow_y":  ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "bottom_bow_x": ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "bottom_bow_y": ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "left_bow_x":   ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "left_bow_y":   ("INT", {"default": 0, "min": -4096, "max": 4096}),
+                "rotate": (["None", "90° CW", "90° CCW", "180°"], {"default": "None"}),
             },
             "hidden": {
                 "node_id": "UNIQUE_ID",
@@ -301,8 +442,13 @@ class OlmDragPerspective:
         tr_x: int, tr_y: int,
         br_x: int, br_y: int,
         bl_x: int, bl_y: int,
-        last_width: int,
-        last_height: int,
+        last_width: int = 0,
+        last_height: int = 0,
+        top_bow_x: int = 0, top_bow_y: int = 0,
+        right_bow_x: int = 0, right_bow_y: int = 0,
+        bottom_bow_x: int = 0, bottom_bow_y: int = 0,
+        left_bow_x: int = 0, left_bow_y: int = 0,
+        rotate: str = "None",
         node_id=None,
     ):
         print(f"[OlmDragPerspective] Node {node_id} executed (Backend)")
@@ -326,11 +472,25 @@ class OlmDragPerspective:
             [bl_x, bl_y],
         ]
 
+        # Widget coordinates are already in rotated space (what user sees).
+        # We just need to know the rotation type to rotate the image frames.
+        rotate_k = 0
+        if rotate == "90° CW":
+            rotate_k = 3
+        elif rotate == "90° CCW":
+            rotate_k = 1
+        elif rotate == "180°":
+            rotate_k = 2
+
+        # Use coordinates as-is (they're already in the rotated coordinate system)
+        src_pts_warp = src_pts
+
         # Compute output dimensions from the edge lengths of the quad
-        top_w    = np.sqrt((tr_x - tl_x) ** 2 + (tr_y - tl_y) ** 2)
-        bottom_w = np.sqrt((br_x - bl_x) ** 2 + (br_y - bl_y) ** 2)
-        left_h   = np.sqrt((bl_x - tl_x) ** 2 + (bl_y - tl_y) ** 2)
-        right_h  = np.sqrt((br_x - tr_x) ** 2 + (br_y - tr_y) ** 2)
+        (rtl_x, rtl_y), (rtr_x, rtr_y), (rbr_x, rbr_y), (rbl_x, rbl_y) = src_pts_warp
+        top_w    = np.sqrt((rtr_x - rtl_x) ** 2 + (rtr_y - rtl_y) ** 2)
+        bottom_w = np.sqrt((rbr_x - rbl_x) ** 2 + (rbr_y - rbl_y) ** 2)
+        left_h   = np.sqrt((rbl_x - rtl_x) ** 2 + (rbl_y - rtl_y) ** 2)
+        right_h  = np.sqrt((rbr_x - rtr_x) ** 2 + (rbr_y - rtr_y) ** 2)
 
         out_w = max(1, int(max(top_w, bottom_w)))
         out_h = max(1, int(max(left_h, right_h)))
@@ -343,7 +503,7 @@ class OlmDragPerspective:
         ]
 
         try:
-            coeffs = _compute_perspective_coeffs(src_pts, dst_pts)
+            coeffs = _compute_perspective_coeffs(src_pts_warp, dst_pts)
         except Exception as e:
             print(f"[OlmDragPerspective] Error computing perspective coefficients: {e}")
             coeffs = None
@@ -353,12 +513,53 @@ class OlmDragPerspective:
         except AttributeError:
             resample = Image.BICUBIC  # Pillow < 9.1
 
+        bows = {
+            'top':    [top_bow_x,    top_bow_y],
+            'right':  [right_bow_x,  right_bow_y],
+            'bottom': [bottom_bow_x, bottom_bow_y],
+            'left':   [left_bow_x,   left_bow_y],
+        }
+        use_curves = _has_curves(bows)
+
+        # Precompute Coons remap maps once (same for all frames in the batch)
+        coons_map_x = None
+        coons_map_y = None
+        if use_curves:
+            try:
+                # Bow offsets are already in rotated space (same as src_pts_warp), no rotation needed
+                rotated_bows = bows
+
+                maps = _compute_coons_maps(src_pts_warp, rotated_bows, out_w, out_h)
+                if maps is not None:
+                    coons_map_x, coons_map_y = maps
+                else:
+                    use_curves = False  # cv2 unavailable, fall back to PIL
+            except Exception as e:
+                print(f"[OlmDragPerspective] Coons warp setup failed: {e}")
+                use_curves = False
+
         warped_frames = []
         for i in range(batch_size):
             frame = image[i].cpu().numpy()
+            if rotate_k != 0:
+                frame = np.rot90(frame, k=rotate_k)
             pil_img = Image.fromarray((frame * 255).astype(np.uint8))
 
-            if coeffs is not None:
+            if use_curves and coons_map_x is not None:
+                try:
+                    import cv2
+                    img_np = np.array(pil_img)
+                    warped_np_raw = cv2.remap(
+                        img_np, coons_map_x, coons_map_y,
+                        cv2.INTER_CUBIC,
+                        borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=0,
+                    )
+                    warped_pil = Image.fromarray(warped_np_raw)
+                except Exception as e:
+                    print(f"[OlmDragPerspective] Coons warp failed for frame {i}: {e}")
+                    warped_pil = pil_img.resize((out_w, out_h), resample)
+            elif coeffs is not None:
                 try:
                     warped_pil = pil_img.transform(
                         (out_w, out_h),
@@ -398,6 +599,12 @@ class OlmDragPerspective:
             "tr": [tr_x, tr_y],
             "br": [br_x, br_y],
             "bl": [bl_x, bl_y],
+            "bows": {
+                "top":    [top_bow_x,    top_bow_y],
+                "right":  [right_bow_x,  right_bow_y],
+                "bottom": [bottom_bow_x, bottom_bow_y],
+                "left":   [left_bow_x,   left_bow_y],
+            },
             "out_width": out_w,
             "out_height": out_h,
             "original_size": [current_width, current_height],

@@ -119,8 +119,9 @@ export function previewRectForNodeSize(
     w = h * (aspect || 1);
   }
 
+  // Center the fitted preview inside the reserved preview slot.
   const x = C.PADDING_X / 2 + (innerW - w) / 2;
-  const y = C.HEADER_H + widgetH;
+  const y = C.HEADER_H + widgetH + C.PADDING_Y / 2 + (innerH - h) / 2;
 
   return { x, y, width: w, height: h };
 }
