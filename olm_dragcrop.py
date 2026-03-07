@@ -509,7 +509,9 @@ class OlmDragPerspective:
         _last_wire_hashes[nid]   = wire_hash
         _last_pasted_images[nid] = effective_pasted
 
-        input_hash = _compute_input_image_hash(source_image)
+        # Reuse the already-computed wire_hash when the wired image was selected;
+        # only hash again when source_image is the pasted tensor (a different object).
+        input_hash = wire_hash if source_image is image else _compute_input_image_hash(source_image)
 
         batch_size, current_height, current_width, channels = source_image.shape
 
