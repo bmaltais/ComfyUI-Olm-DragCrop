@@ -43,8 +43,8 @@ def _load_uploaded_image_tensor(image_name: str):
         return None
 
     image_path = folder_paths.get_annotated_filepath(image_name)
-    pil = Image.open(image_path).convert("RGB")
-    arr = np.array(pil).astype(np.float32) / 255.0
+    with Image.open(image_path) as im:
+        arr = np.array(im.convert("RGB")).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None,]
 
 class OlmDragCrop:
@@ -288,7 +288,7 @@ def _has_curves(bows):
 def _edge_control_point_xy(p1, p2, bow_x, bow_y):
     """Quadratic bezier control point = edge midpoint + free 2D offset (bow_x, bow_y)."""
     mx, my = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
-    return np.array([mx + bow_x, my + bow_y])
+    return np.array([mx + bow_x, my + bow_y], dtype=np.float32)
 
 
 def _compute_coons_maps(src_pts, bows, out_w, out_h):
@@ -310,10 +310,10 @@ def _compute_coons_maps(src_pts, bows, out_w, out_h):
     except ImportError:
         return None
 
-    tl = np.array(src_pts[0], dtype=np.float64)
-    tr = np.array(src_pts[1], dtype=np.float64)
-    br = np.array(src_pts[2], dtype=np.float64)
-    bl = np.array(src_pts[3], dtype=np.float64)
+    tl = np.array(src_pts[0], dtype=np.float32)
+    tr = np.array(src_pts[1], dtype=np.float32)
+    br = np.array(src_pts[2], dtype=np.float32)
+    bl = np.array(src_pts[3], dtype=np.float32)
 
     # Control points: midpoint of each edge + free 2D offset
     # Bottom edge uses BL→BR so it matches the top's left-to-right orientation
@@ -322,8 +322,8 @@ def _compute_coons_maps(src_pts, bows, out_w, out_h):
     C_bottom = _edge_control_point_xy(bl, br, bows['bottom'][0], bows['bottom'][1])
     C_left   = _edge_control_point_xy(tl, bl, bows['left'][0],   bows['left'][1])
 
-    us = np.linspace(0.0, 1.0, out_w, dtype=np.float64)  # (out_w,)
-    vs = np.linspace(0.0, 1.0, out_h, dtype=np.float64)  # (out_h,)
+    us = np.linspace(0.0, 1.0, out_w, dtype=np.float32)  # (out_w,)
+    vs = np.linspace(0.0, 1.0, out_h, dtype=np.float32)  # (out_h,)
     U, V = np.meshgrid(us, vs)                            # (out_h, out_w)
 
     def bezier2(p0, p1c, p2, t):
@@ -358,8 +358,8 @@ def _compute_coons_maps(src_pts, bows, out_w, out_h):
         bilinear
     )  # (out_h, out_w, 2)
 
-    map_x = P[:, :, 0].astype(np.float32)
-    map_y = P[:, :, 1].astype(np.float32)
+    map_x = P[:, :, 0]
+    map_y = P[:, :, 1]
     return map_x, map_y
 
 
