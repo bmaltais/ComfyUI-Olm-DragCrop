@@ -22,9 +22,13 @@ export function handleOnExecutedPersp(node, message) {
     return;
   }
 
-  const imageUrl = app.api.apiURL(
-    `/view?filename=${imageInfo.filename}&type=${imageInfo.type}&subfolder=${imageInfo.subfolder}&rand=${Date.now()}`
-  );
+  const imageUrlParams = new URLSearchParams({
+    filename: imageInfo.filename,
+    type: imageInfo.type,
+    subfolder: imageInfo.subfolder,
+    rand: String(Date.now()),
+  });
+  const imageUrl = app.api.apiURL(`/view?${imageUrlParams.toString()}`);
 
   node.image.onload = () => {
     node.imageLoaded = true;
