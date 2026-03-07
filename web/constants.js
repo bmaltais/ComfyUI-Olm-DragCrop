@@ -52,6 +52,16 @@ export const TEXT = {
   fontMessage: "14px Arial",
 };
 
+export const CANVAS_EXTEND_OPTIONS = ["None", "10%", "15%", "25%", "50%", "100%"];
+export const CANVAS_EXTEND_MAP = {
+  "None": 0,
+  "10%": 0.10,
+  "15%": 0.15,
+  "25%": 0.25,
+  "50%": 0.50,
+  "100%": 1.0,
+};
+
 export const TEXTCONTENT = {
   aspectStringMsg: "Use values like 0.5 or 16:9",
   imageAreaInfoMsgRow1: "Out of sync, run Graph to get preview",
