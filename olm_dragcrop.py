@@ -16,6 +16,12 @@ _persp_pasted_images: dict = {}   # OlmDragPerspective: node_id -> pasted_image 
 _crop_wire_hashes:    dict = {}   # OlmDragCrop:        node_id -> wire hash
 _crop_pasted_images:  dict = {}   # OlmDragCrop:        node_id -> pasted_image filename
 
+# Preview caching: skip expensive preview saves when input hasn't changed.
+# Maps node_id -> (input_hash, preview_filename) to avoid redundant GPU→CPU
+# transfer, numpy conversion, PIL encoding, and disk I/O.
+_crop_preview_cache:  dict = {}   # OlmDragCrop:        node_id -> (hash, filename)
+_persp_preview_cache: dict = {}   # OlmDragPerspective: node_id -> (hash, filename)
+
 
 def debug_print(*args, **kwargs):
     if DEBUG_MODE:
@@ -291,8 +297,13 @@ class OlmDragCrop:
         debug_print(f"[OlmDragCrop] - Reset frontend crop UI: {reset_frontend_crop}")
         debug_print("=" * 60)
 
+        # Performance optimization: skip preview save when input unchanged.
+        # Avoids GPU→CPU transfer + numpy conversion + PIL encoding + disk I/O (~10-50ms).
         original_filename = None
-        if batch_size > 0:
+        cached_hash, cached_filename = _crop_preview_cache.get(nid, (None, None))
+        if cached_hash == input_hash and cached_filename:
+            original_filename = cached_filename
+        elif batch_size > 0:
             img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
             pil_image = Image.fromarray(img_array)
             temp_dir = get_temp_directory()
@@ -302,6 +313,7 @@ class OlmDragCrop:
             os.makedirs(temp_dir, exist_ok=True)
             try:
                 pil_image.save(filepath)
+                _crop_preview_cache[nid] = (input_hash, original_filename)
             except Exception as e:
                 print(f"[OlmDragCrop] Error saving preview image: {e}")
                 original_filename = None
@@ -696,9 +708,13 @@ class OlmDragPerspective:
 
         output_image = torch.stack(warped_frames, dim=0)
 
-        # Save preview of the original (unwarped) frame 0 for the frontend
+        # Performance optimization: skip preview save when input unchanged.
+        # Avoids GPU→CPU transfer + numpy conversion + PIL encoding + disk I/O (~10-50ms).
         original_filename = None
-        if batch_size > 0:
+        cached_hash, cached_filename = _persp_preview_cache.get(nid, (None, None))
+        if cached_hash == input_hash and cached_filename:
+            original_filename = cached_filename
+        elif batch_size > 0:
             img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
             pil_preview = Image.fromarray(img_array)
             temp_dir = get_temp_directory()
@@ -708,6 +724,7 @@ class OlmDragPerspective:
             os.makedirs(temp_dir, exist_ok=True)
             try:
                 pil_preview.save(filepath)
+                _persp_preview_cache[nid] = (input_hash, original_filename)
             except Exception as e:
                 print(f"[OlmDragPerspective] Error saving preview image: {e}")
                 original_filename = None
