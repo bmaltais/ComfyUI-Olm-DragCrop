@@ -9,6 +9,11 @@ import hashlib
 
 DEBUG_MODE = False
 
+# Per-node-id memory of the last execution's image sources.
+# Used to decide whether a wired input change should override a stale pasted_image.
+_last_wire_hashes: dict   = {}   # node_id -> sha256 of wired tensor used last run
+_last_pasted_images: dict = {}   # node_id -> pasted_image filename used last run
+
 def debug_print(*args, **kwargs):
     if DEBUG_MODE:
         print(*args, **kwargs)
@@ -508,18 +513,49 @@ class OlmDragPerspective:
     ):
         print(f"[OlmDragPerspective] Node {node_id} executed (Backend)")
 
-        # pasted_image (drop/Ctrl-V) takes priority over wired IMAGE input.
-        # When a wire is connected without a drop, the frontend clears pasted_image
-        # via onConnectionsChange, so the wire is used automatically in that case.
-        source_image = image
-        if pasted_image:
-            try:
-                source_image = _load_uploaded_image_tensor(pasted_image)
-            except Exception as e:
-                print(f"[OlmDragPerspective] Failed to load pasted image '{pasted_image}': {e}")
+        # --- Source image selection ---
+        # Priority rules (tracked across runs via module-level dicts keyed by node_id):
+        #
+        #  1. No paste value → always use wire (or raise if no wire either)
+        #  2. Paste is NEW this run (pasted_fresh=True) → paste wins regardless of wire
+        #  3. Paste is stale AND wire content changed → wire wins; signal frontend to clear
+        #  4. Paste is stale AND wire unchanged → paste still wins (last user intent)
+
+        nid = str(node_id) if node_id is not None else "__unknown__"
+        wire_hash     = _compute_input_image_hash(image) if image is not None else ""
+        last_wire     = _last_wire_hashes.get(nid, None)   # None = first run
+        last_pasted   = _last_pasted_images.get(nid, "")   # "" = never pasted
+
+        pasted_fresh  = bool(pasted_image) and (pasted_image != last_pasted)
+        wire_changed  = bool(image is not None) and (wire_hash != last_wire)
+
+        clear_pasted_on_frontend = False
+
+        if not pasted_image:
+            # Case 1 — no paste, use wire
+            source_image = image
+        elif pasted_fresh:
+            # Case 2 — user just dropped/pasted a new file
+            source_image = _load_uploaded_image_tensor(pasted_image)
+            if source_image is None:
+                source_image = image
+        elif wire_changed:
+            # Case 3 — stale paste but wire content changed → wire wins
+            source_image = image
+            clear_pasted_on_frontend = True
+        else:
+            # Case 4 — stale paste, wire unchanged → keep using paste
+            source_image = _load_uploaded_image_tensor(pasted_image)
+            if source_image is None:
+                source_image = image
 
         if source_image is None:
             raise ValueError("OlmDragPerspective requires either an IMAGE input or a pasted_image upload.")
+
+        # Update per-node memory for next run
+        effective_pasted = pasted_image if (not clear_pasted_on_frontend) else ""
+        _last_wire_hashes[nid]   = wire_hash
+        _last_pasted_images[nid] = effective_pasted
 
         input_hash = _compute_input_image_hash(source_image)
 
@@ -680,6 +716,7 @@ class OlmDragPerspective:
             "original_size": [current_width, current_height],
             "reset_quad_ui": reset_quad_ui,
             "input_hash": input_hash,
+            "clear_pasted_image": clear_pasted_on_frontend,
         }
 
         persp_json = json.dumps(persp_payload)

@@ -122,6 +122,14 @@ export function handleOnExecutedPersp(node, message) {
       node.properties.lastOutHeight = backendData.out_height;
     }
 
+    // Backend detected a stale pasted_image while the wired input changed → clear it
+    // so subsequent runs use the wire without needing a Force Refresh.
+    // Do NOT blank node.image here — the backend preview was just loaded successfully.
+    if (backendData?.clear_pasted_image) {
+      const pastedWidget = node.widgets?.find((w) => w.name === "pasted_image");
+      if (pastedWidget) pastedWidget.value = "";
+    }
+
     commitState(node);
     node.setDirtyCanvas(true);
   };
