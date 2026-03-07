@@ -20,22 +20,59 @@ import os
 import folder_paths
 from folder_paths import get_temp_directory
 import json
+from collections import OrderedDict
 
 DEBUG_MODE = False
+
+
+class LRUCache(OrderedDict):
+    """
+    Simple LRU cache with automatic eviction of least-recently-used entries.
+
+    Prevents unbounded memory growth in long-running ComfyUI sessions where
+    workflows are created/deleted repeatedly, generating new node IDs that
+    would otherwise accumulate forever in module-level tracking dicts.
+    """
+
+    def __init__(self, max_size=1000):
+        super().__init__()
+        self.max_size = max_size
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)  # Mark as recently used
+        return value
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)  # Mark as recently used
+        super().__setitem__(key, value)
+        if len(self) > self.max_size:
+            oldest = next(iter(self))  # First key = oldest
+            del self[oldest]
+
+    def get(self, key, default=None):
+        """Override get() to also mark accessed entries as recently used."""
+        if key in self:
+            return self[key]  # Triggers __getitem__ which updates order
+        return default
+
 
 # Per-node-id memory of the last execution's image sources, keyed by node_id string.
 # Used to decide whether a wired input change should override a stale pasted_image.
 # Separate dicts per node class so IDs from different node types never collide.
-_persp_wire_hashes: dict = {}  # OlmDragPerspective: node_id -> wire hash
-_persp_pasted_images: dict = {}  # OlmDragPerspective: node_id -> pasted_image filename
-_crop_wire_hashes: dict = {}  # OlmDragCrop:        node_id -> wire hash
-_crop_pasted_images: dict = {}  # OlmDragCrop:        node_id -> pasted_image filename
+# LRU eviction prevents memory leaks in long-running sessions.
+_persp_wire_hashes = LRUCache(1000)  # OlmDragPerspective: node_id -> wire hash
+_persp_pasted_images = LRUCache(1000)  # OlmDragPerspective: node_id -> pasted_image filename
+_crop_wire_hashes = LRUCache(1000)  # OlmDragCrop:        node_id -> wire hash
+_crop_pasted_images = LRUCache(1000)  # OlmDragCrop:        node_id -> pasted_image filename
 
 # Preview caching: skip expensive preview saves when input hasn't changed.
 # Maps node_id -> (input_hash, preview_filename) to avoid redundant GPU→CPU
 # transfer, numpy conversion, PIL encoding, and disk I/O.
-_crop_preview_cache: dict = {}  # OlmDragCrop:        node_id -> (hash, filename)
-_persp_preview_cache: dict = {}  # OlmDragPerspective: node_id -> (hash, filename)
+# LRU eviction prevents memory leaks in long-running sessions.
+_crop_preview_cache = LRUCache(1000)  # OlmDragCrop:        node_id -> (hash, filename)
+_persp_preview_cache = LRUCache(1000)  # OlmDragPerspective: node_id -> (hash, filename)
 
 
 def debug_print(*args, **kwargs):
