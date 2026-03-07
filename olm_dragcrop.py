@@ -660,7 +660,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "OlmDragCrop": "Olm Drag Crop",
     "OlmCropInfoInterpreter": "Olm Crop Info → Values",
-    "OlmDragPerspective": "Olm Drag Perspective",
+    "OlmDragPerspective": "Olm Correct Perspective",
 }
 
 
