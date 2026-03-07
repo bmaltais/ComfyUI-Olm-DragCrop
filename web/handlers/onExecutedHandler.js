@@ -43,11 +43,6 @@ export function handleOnExecuted(node, message) {
     const lastResolution = node.properties.lastResolution || null;
     const resolutionChanged = lastResolution !== resolutionId;
 
-    // Track image identifier to detect new image inputs
-    const imageId = `${imageInfo.filename}|${imageInfo.subfolder || ""}|${imageInfo.type}`;
-    const lastImageId = node.properties.lastImageId || null;
-    const imageChanged = lastImageId !== imageId;
-
     const inputHash = backendCropData?.input_hash || "";
     const lastInputHash = node.properties.lastInputHash || "";
     const hashChanged = !!inputHash && inputHash !== lastInputHash;
@@ -55,7 +50,6 @@ export function handleOnExecuted(node, message) {
     node.properties.actualImageWidth = newWidth;
     node.properties.actualImageHeight = newHeight;
     node.properties.lastResolution = resolutionId;
-    node.properties.lastImageId = imageId;
     node.properties.lastInputHash = inputHash;
 
     const last_width_widget = getWidget(node, "last_width");
@@ -65,7 +59,7 @@ export function handleOnExecuted(node, message) {
     if (last_height_widget) last_height_widget.value = newHeight;
 
     let shouldRecomputeSize =
-      resolutionChanged || backendShouldResetCrop || imageChanged || hashChanged;
+      resolutionChanged || backendShouldResetCrop || hashChanged;
 
     if (shouldRecomputeSize) {
       if (node.onResize) {
@@ -101,7 +95,7 @@ export function handleOnExecuted(node, message) {
     node._previewAreaCache = null;
     const preview = getPreviewAreaCached(node);
 
-    if (backendShouldResetCrop || resolutionChanged || imageChanged || hashChanged) {
+    if (backendShouldResetCrop || resolutionChanged || hashChanged) {
       resetCrop(node, preview);
     } else if (backendCropData) {
       node.properties.crop_left = backendCropData.left;

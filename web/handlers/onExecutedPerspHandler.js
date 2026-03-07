@@ -39,11 +39,6 @@ export function handleOnExecutedPersp(node, message) {
     const lastResolution    = node.properties.lastResolution || null;
     const resolutionChanged = lastResolution !== resolutionId;
 
-    // Track image identifier to detect new image inputs
-    const imageId = `${imageInfo.filename}|${imageInfo.subfolder || ""}|${imageInfo.type}`;
-    const lastImageId = node.properties.lastImageId || null;
-    const imageChanged = lastImageId !== imageId;
-
     const inputHash = backendData?.input_hash || "";
     const lastInputHash = node.properties.lastInputHash || "";
     const hashChanged = !!inputHash && inputHash !== lastInputHash;
@@ -51,7 +46,6 @@ export function handleOnExecutedPersp(node, message) {
     node.properties.actualImageWidth  = newWidth;
     node.properties.actualImageHeight = newHeight;
     node.properties.lastResolution    = resolutionId;
-    node.properties.lastImageId = imageId;
     node.properties.lastInputHash = inputHash;
 
     const last_width_widget = getWidget(node, "last_width");
@@ -60,7 +54,7 @@ export function handleOnExecutedPersp(node, message) {
     const last_height_widget = getWidget(node, "last_height");
     if (last_height_widget) last_height_widget.value = newHeight;
 
-    if (resolutionChanged || shouldReset || imageChanged || hashChanged) {
+    if (resolutionChanged || shouldReset || hashChanged) {
       if (node.onResize) node.onResize(node.size);
 
       const newSize = node.computeSize();
@@ -83,7 +77,7 @@ export function handleOnExecutedPersp(node, message) {
     if (preserveCorners) {
       // User dropped an image and may have already adjusted corners — don't
       // touch them regardless of what the backend sent back.
-    } else if (shouldReset || resolutionChanged || imageChanged || hashChanged) {
+    } else if (shouldReset || resolutionChanged || hashChanged) {
       // Reset transform settings (canvas extend and rotation) on new image
       node.properties.canvasExtendLabel = "None";
       const extendWidget = getWidget(node, "Canvas Extend");

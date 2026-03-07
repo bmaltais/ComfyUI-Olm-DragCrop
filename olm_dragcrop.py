@@ -5,13 +5,12 @@ import os
 import folder_paths
 from folder_paths import get_temp_directory
 import json
-import hashlib
 
 DEBUG_MODE = False
 
 # Per-node-id memory of the last execution's image sources.
 # Used to decide whether a wired input change should override a stale pasted_image.
-_last_wire_hashes: dict   = {}   # node_id -> sha256 of wired tensor used last run
+_last_wire_hashes: dict   = {}   # node_id -> signature of wired tensor used last run
 _last_pasted_images: dict = {}   # node_id -> pasted_image filename used last run
 
 def debug_print(*args, **kwargs):
@@ -21,17 +20,19 @@ def debug_print(*args, **kwargs):
 
 def _compute_input_image_hash(image: torch.Tensor) -> str:
     """
-    Compute a stable SHA-256 hash for the input tensor.
-    Only the first frame is hashed to avoid copying large batches to CPU.
-    The full tensor shape is included so a batch-size-only change is detected.
+    Compute a lightweight signature for change detection between executions.
+
+    Instead of a full SHA-256 over the entire first frame (which requires a
+    large GPU→CPU transfer and two full-frame copies), we subsample every 8th
+    pixel in each spatial dimension and sum to a single float64 scalar.
+    That's ~64x less data transferred and negligible collision risk for
+    natural-image change detection.
     """
     try:
-        frame = image[0].detach().cpu().numpy()
-        frame_u8 = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
-        h = hashlib.sha256()
-        h.update(str(image.shape).encode("utf-8"))
-        h.update(frame_u8.tobytes())
-        return h.hexdigest()
+        frame = image[0]                      # (H, W, C) — stays on device
+        sample = frame[::8, ::8, :]           # strided view, no copy
+        total = sample.to(torch.float64).sum().item()  # one scalar to CPU
+        return f"{image.shape}|{total:.8f}"
     except Exception as e:
         print(f"[OlmDrag] Failed to compute input image hash: {e}")
         return ""
@@ -607,26 +608,32 @@ class OlmDragPerspective:
 
         warped_frames = []
         for i in range(batch_size):
-            frame = source_image[i].cpu().numpy()
+            frame = source_image[i].cpu().numpy()  # float32 H,W,C in [0,1]
             if rotate_k != 0:
-                frame = np.rot90(frame, k=rotate_k)
-            pil_img = Image.fromarray((frame * 255).astype(np.uint8))
+                # rot90 returns a non-contiguous view; make contiguous once here
+                frame = np.ascontiguousarray(np.rot90(frame, k=rotate_k))
 
             if use_curves and coons_map_x is not None:
                 try:
                     import cv2
-                    img_np = np.array(pil_img)
-                    warped_np_raw = cv2.remap(
-                        img_np, coons_map_x, coons_map_y,
+                    # Pass float32 directly — skips the uint8 round-trip entirely
+                    warped = cv2.remap(
+                        frame, coons_map_x, coons_map_y,
                         cv2.INTER_CUBIC,
                         borderMode=cv2.BORDER_CONSTANT,
                         borderValue=0,
                     )
-                    warped_pil = Image.fromarray(warped_np_raw)
+                    # clip to [0,1]: cubic interpolation can slightly overshoot
+                    warped_frames.append(torch.from_numpy(np.clip(warped, 0.0, 1.0)))
+                    continue
                 except Exception as e:
                     print(f"[OlmDragPerspective] Coons warp failed for frame {i}: {e}")
-                    warped_pil = pil_img.resize((out_w, out_h), resample)
-            elif coeffs is not None:
+                    # fall through to PIL path below
+
+            # PIL path — used for planar perspective transform, resize fallback,
+            # or as the cv2 error fallback above
+            pil_img = Image.fromarray((frame * 255).astype(np.uint8))
+            if coeffs is not None:
                 try:
                     warped_pil = pil_img.transform(
                         (out_w, out_h),
