@@ -1,6 +1,6 @@
 import { ColorUtils } from "../utils/colorUtils.js";
 import { GRAPHICS, TEXT, LAYOUT } from "../constants.js";
-import { getImageAreaInPreview, getBowHandlePositions } from "./perspectiveModel.js";
+import { getImageAreaInPreview, getBowHandlePositions, initBows } from "./perspectiveModel.js";
 
 /**
  * Draw the perspective quad overlay:
@@ -281,7 +281,7 @@ export function handleDrawForegroundPersp(node, ctx, widgetHeight, preview) {
   drawPerspInfo(ctx, node, nodeCtx, widgetHeight);
 
   if (node.properties.perspCorners) {
-    const bows = node.properties.perspBows || { top: 0, right: 0, bottom: 0, left: 0 };
+    const bows = node.properties.perspBows || initBows();
     const bowHandlePositions = getBowHandlePositions(
       node,
       preview,
