@@ -88,7 +88,7 @@ app.registerExtension({
       const hidden = [
         "drawing_version",
         "pasted_image",
-        "last_width", "last_height",
+        "last_width", "last_height", "last_rotate",
         "tl_x", "tl_y",
         "tr_x", "tr_y",
         "br_x", "br_y",
@@ -309,6 +309,22 @@ app.registerExtension({
       initNodeState(node);
       hideInternalWidgets(node);
       createWidgets(node);
+
+      // Add callback to rotate widget to immediately update corners on rotation change
+      const rotateWidget = node.widgets?.find((w) => w.name === "rotate");
+      if (rotateWidget) {
+        const originalCallback = rotateWidget.callback;
+        rotateWidget.callback = function(value) {
+          // Call original callback if it exists
+          if (originalCallback) {
+            originalCallback.call(this, value);
+          }
+          // Reset corners to fit the rotated image dimensions
+          const preview = getPreviewAreaCached(node);
+          resetCorners(node, preview);
+          node.setDirtyCanvas(true);
+        };
+      }
 
       node.size = node.computeSize();
 
