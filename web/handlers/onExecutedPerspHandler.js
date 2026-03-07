@@ -68,14 +68,25 @@ export function handleOnExecutedPersp(node, message) {
     node._previewAreaCache = null;
     const preview = getPreviewAreaCached(node);
 
-    if (shouldReset || resolutionChanged || imageChanged || hashChanged) {
+    // If the user just dropped an image, corners were already reset by the drop
+    // handler and the user may have adjusted them. Skip resetting on this one
+    // execution so their perspective setup is preserved.
+    const preserveCorners = !!node.properties._preserveCorners;
+    if (preserveCorners) {
+      node.properties._preserveCorners = false;
+    }
+
+    if (preserveCorners) {
+      // User dropped an image and may have already adjusted corners — don't
+      // touch them regardless of what the backend sent back.
+    } else if (shouldReset || resolutionChanged || imageChanged || hashChanged) {
       // Reset transform settings (canvas extend and rotation) on new image
       node.properties.canvasExtendLabel = "None";
       const extendWidget = getWidget(node, "Canvas Extend");
       if (extendWidget) extendWidget.value = "None";
       const rotateWidget = getWidget(node, "rotate");
       if (rotateWidget) rotateWidget.value = "None";
-      
+
       resetCorners(node, preview);
     } else if (backendData) {
       // Restore source-space corner widgets, then map to preview using

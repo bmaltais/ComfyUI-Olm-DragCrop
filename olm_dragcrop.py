@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from PIL import Image
 import os
+import folder_paths
 from folder_paths import get_temp_directory
 import json
 import hashlib
@@ -28,6 +29,17 @@ def _compute_input_image_hash(image: torch.Tensor) -> str:
     except Exception as e:
         print(f"[OlmDrag] Failed to compute input image hash: {e}")
         return ""
+
+
+def _load_uploaded_image_tensor(image_name: str):
+    """Load an uploaded input image filename into a Comfy IMAGE tensor (B,H,W,C)."""
+    if not image_name:
+        return None
+
+    image_path = folder_paths.get_annotated_filepath(image_name)
+    pil = Image.open(image_path).convert("RGB")
+    arr = np.array(pil).astype(np.float32) / 255.0
+    return torch.from_numpy(arr)[None,]
 
 class OlmDragCrop:
     @classmethod
@@ -421,10 +433,12 @@ def _prepare_rotated_geometry(src_pts, width, height, rotate):
 class OlmDragPerspective:
     @classmethod
     def INPUT_TYPES(cls):
+        input_dir = folder_paths.get_input_directory()
+        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+        files = folder_paths.filter_files_content_types(files, ["image"])
         return {
             "required": {
                 "drawing_version": ("STRING", {"default": "init"}),
-                "image": ("IMAGE",),
                 "tl_x": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
                 "tl_y": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
                 "tr_x": ("INT", {"default": 512, "min": -8192, "max": 8192}),
@@ -445,6 +459,10 @@ class OlmDragPerspective:
                 "left_bow_y":   ("INT", {"default": 0, "min": -4096, "max": 4096}),
                 "rotate": (["None", "90° CW", "90° CCW", "180°"], {"default": "None"}),
             },
+            "optional": {
+                "image": ("IMAGE",),
+                "pasted_image": ([""] + sorted(files), {"image_upload": True}),
+            },
             "hidden": {
                 "node_id": "UNIQUE_ID",
             }
@@ -455,10 +473,24 @@ class OlmDragPerspective:
     FUNCTION = "correct"
     CATEGORY = "image/transform"
 
+    @classmethod
+    def VALIDATE_INPUTS(cls, pasted_image=None, **kwargs):
+        # The pasted_image combo list only contains files from the root input dir,
+        # but uploads may land in subfolders (e.g. "pasted/image.png"). Rather than
+        # rebuilding the full recursive list on every validation call, we accept any
+        # non-empty value and verify the file actually exists on disk.
+        if pasted_image and pasted_image != "":
+            try:
+                fp = folder_paths.get_annotated_filepath(pasted_image)
+                if not os.path.isfile(fp):
+                    return f"pasted_image file not found: {pasted_image}"
+            except Exception as e:
+                return f"Invalid pasted_image path '{pasted_image}': {e}"
+        return True
+
     def correct(
         self,
         drawing_version,
-        image: torch.Tensor,
         tl_x: int, tl_y: int,
         tr_x: int, tr_y: int,
         br_x: int, br_y: int,
@@ -470,13 +502,28 @@ class OlmDragPerspective:
         bottom_bow_x: int = 0, bottom_bow_y: int = 0,
         left_bow_x: int = 0, left_bow_y: int = 0,
         rotate: str = "None",
+        image: torch.Tensor = None,
+        pasted_image: str = "",
         node_id=None,
     ):
         print(f"[OlmDragPerspective] Node {node_id} executed (Backend)")
 
-        input_hash = _compute_input_image_hash(image)
+        # pasted_image (drop/Ctrl-V) takes priority over wired IMAGE input.
+        # When a wire is connected without a drop, the frontend clears pasted_image
+        # via onConnectionsChange, so the wire is used automatically in that case.
+        source_image = image
+        if pasted_image:
+            try:
+                source_image = _load_uploaded_image_tensor(pasted_image)
+            except Exception as e:
+                print(f"[OlmDragPerspective] Failed to load pasted image '{pasted_image}': {e}")
 
-        batch_size, current_height, current_width, channels = image.shape
+        if source_image is None:
+            raise ValueError("OlmDragPerspective requires either an IMAGE input or a pasted_image upload.")
+
+        input_hash = _compute_input_image_hash(source_image)
+
+        batch_size, current_height, current_width, channels = source_image.shape
 
         resolution_changed = (current_width != last_width or current_height != last_height)
         reset_quad_ui = False
@@ -563,7 +610,7 @@ class OlmDragPerspective:
 
         warped_frames = []
         for i in range(batch_size):
-            frame = image[i].cpu().numpy()
+            frame = source_image[i].cpu().numpy()
             if rotate_k != 0:
                 frame = np.rot90(frame, k=rotate_k)
             pil_img = Image.fromarray((frame * 255).astype(np.uint8))
@@ -604,7 +651,7 @@ class OlmDragPerspective:
         # Save preview of the original (unwarped) frame 0 for the frontend
         original_filename = None
         if batch_size > 0:
-            img_array = (image[0].cpu().numpy() * 255).astype(np.uint8)
+            img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
             pil_preview = Image.fromarray(img_array)
             temp_dir = get_temp_directory()
             filename_hash = hash(f"persp_{node_id}_{current_width}x{current_height}")
