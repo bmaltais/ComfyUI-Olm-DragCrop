@@ -516,11 +516,18 @@ class OlmDragPerspective:
         resolution_changed = (current_width != last_width or current_height != last_height)
         reset_quad_ui = False
 
+        # Widget coordinates are stored in rotated space (what the user sees).
+        # For 90° rotations the displayed width and height are swapped.
+        if rotate in ("90° CW", "90° CCW"):
+            rotated_w, rotated_h = current_height, current_width
+        else:
+            rotated_w, rotated_h = current_width, current_height
+
         if resolution_changed:
             tl_x, tl_y = 0, 0
-            tr_x, tr_y = current_width, 0
-            br_x, br_y = current_width, current_height
-            bl_x, bl_y = 0, current_height
+            tr_x, tr_y = rotated_w, 0
+            br_x, br_y = rotated_w, rotated_h
+            bl_x, bl_y = 0, rotated_h
             reset_quad_ui = True
 
         src_pts = [
