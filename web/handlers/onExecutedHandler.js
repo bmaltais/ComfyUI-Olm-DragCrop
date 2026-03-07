@@ -124,6 +124,11 @@ export function handleOnExecuted(node, message) {
       );
     }
 
+    if (backendCropData?.clear_pasted_image) {
+      const pastedWidget = getWidget(node, "pasted_image");
+      if (pastedWidget) pastedWidget.value = "";
+    }
+
     commitState(node);
     node.setDirtyCanvas(true);
   };

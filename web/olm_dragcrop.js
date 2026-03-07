@@ -67,6 +67,7 @@ app.registerExtension({
         }
       }
 
+      node.previewMediaType = "image";
       node.image = new Image();
       node.image.src = "";
       node.imageLoaded = false;
@@ -96,6 +97,9 @@ app.registerExtension({
 
       const crop_height_widget = getWidget(node, "crop_height");
       hideWidget(crop_height_widget, -4);
+
+      const pasted_image_widget = getWidget(node, "pasted_image");
+      hideWidget(pasted_image_widget, -4);
     }
 
     function createWidgets(node) {
@@ -338,6 +342,14 @@ app.registerExtension({
     ) {
       const node = this;
       if (type === LiteGraph.INPUT && link_info?.type === "IMAGE") {
+        if (connected) {
+          const pastedWidget = getWidget(node, "pasted_image");
+          if (pastedWidget && pastedWidget.value) {
+            pastedWidget.value = "";
+          }
+          node.image.src = "";
+          node.imageLoaded = false;
+        }
         node.setDirtyCanvas(true);
       }
     };

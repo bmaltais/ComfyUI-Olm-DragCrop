@@ -10,8 +10,12 @@ DEBUG_MODE = False
 
 # Per-node-id memory of the last execution's image sources.
 # Used to decide whether a wired input change should override a stale pasted_image.
-_last_wire_hashes: dict   = {}   # node_id -> signature of wired tensor used last run
-_last_pasted_images: dict = {}   # node_id -> pasted_image filename used last run
+_last_wire_hashes: dict   = {}   # node_id -> signature of wired tensor used last run (OlmDragPerspective)
+_last_pasted_images: dict = {}   # node_id -> pasted_image filename used last run (OlmDragPerspective)
+
+# Same tracking for OlmDragCrop
+_crop_last_wire_hashes: dict   = {}   # node_id -> wire hash last run
+_crop_last_pasted_images: dict = {}   # node_id -> pasted_image filename last run
 
 def debug_print(*args, **kwargs):
     if DEBUG_MODE:
@@ -51,10 +55,12 @@ def _load_uploaded_image_tensor(image_name: str):
 class OlmDragCrop:
     @classmethod
     def INPUT_TYPES(cls):
+        input_dir = folder_paths.get_input_directory()
+        files = [f for f in os.listdir(input_dir)
+                 if os.path.isfile(os.path.join(input_dir, f))]
         return {
             "required": {
                 "drawing_version": ("STRING", {"default": "init"}),
-                "image": ("IMAGE",),
                 "crop_left": ("INT", {"default": 0, "min": 0, "max": 8192}),
                 "crop_right": ("INT", {"default": 0, "min": 0, "max": 8192}),
                 "crop_top": ("INT", {"default": 0, "min": 0, "max": 8192}),
@@ -65,12 +71,27 @@ class OlmDragCrop:
                 "last_height": ("INT", {"default": 0}),
             },
             "optional": {
-                "mask": ("MASK",)
+                "image": ("IMAGE",),
+                "pasted_image": (sorted(files), {"image_upload": True}),
+                "mask": ("MASK",),
             },
             "hidden": {
                 "node_id": "UNIQUE_ID",
             }
         }
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, pasted_image=None, **kwargs):
+        # Only validate the file reference when a pasted_image value is provided.
+        # The "requires IMAGE or pasted_image" guard is enforced at runtime in crop().
+        if pasted_image and pasted_image != "":
+            try:
+                fp = folder_paths.get_annotated_filepath(pasted_image)
+                if not os.path.isfile(fp):
+                    return f"pasted_image file not found: {pasted_image}"
+            except Exception as e:
+                return f"Invalid pasted_image: {e}"
+        return True
 
     RETURN_TYPES = ("IMAGE", "MASK", "STRING")
     RETURN_NAMES = ("IMAGE", "MASK", "CROP_JSON")
@@ -80,7 +101,6 @@ class OlmDragCrop:
     def crop(
         self,
         drawing_version,
-        image: torch.Tensor,
         crop_left: int,
         crop_right: int,
         crop_top: int,
@@ -89,15 +109,48 @@ class OlmDragCrop:
         crop_height: int,
         last_width: int,
         last_height: int,
+        image: torch.Tensor = None,
+        pasted_image: str = "",
         node_id=None,
         mask=None,
     ):
         debug_print("=" * 60)
         print(f"[OlmDragCrop] Node {node_id} executed (Backend)")
 
-        input_hash = _compute_input_image_hash(image)
+        nid = str(node_id) if node_id is not None else "__unknown__"
+        wire_hash   = _compute_input_image_hash(image) if image is not None else ""
+        last_wire   = _crop_last_wire_hashes.get(nid, None)
+        last_pasted = _crop_last_pasted_images.get(nid, "")
 
-        batch_size, current_height, current_width, channels = image.shape
+        pasted_fresh = bool(pasted_image) and (pasted_image != last_pasted)
+        wire_changed = bool(image is not None) and (wire_hash != last_wire)
+
+        clear_pasted_on_frontend = False
+
+        if not pasted_image:
+            source_image = image
+        elif pasted_fresh:
+            source_image = _load_uploaded_image_tensor(pasted_image)
+            if source_image is None:
+                source_image = image
+        elif wire_changed:
+            source_image = image
+            clear_pasted_on_frontend = True
+        else:
+            source_image = _load_uploaded_image_tensor(pasted_image)
+            if source_image is None:
+                source_image = image
+
+        if source_image is None:
+            raise ValueError("OlmDragCrop requires either an IMAGE input or a pasted_image upload.")
+
+        effective_pasted = pasted_image if (not clear_pasted_on_frontend) else ""
+        _crop_last_wire_hashes[nid]   = wire_hash
+        _crop_last_pasted_images[nid] = effective_pasted
+
+        input_hash = wire_hash if source_image is image else _compute_input_image_hash(source_image)
+
+        batch_size, current_height, current_width, channels = source_image.shape
 
         debug_print("\n[OlmDragCrop] [Input Image Info]")
         debug_print(f"[OlmDragCrop] - Current image size: {current_width}x{current_height}")
@@ -145,14 +198,14 @@ class OlmDragCrop:
             computed_crop_bottom = crop_top + crop_height
             reset_frontend_crop = True
 
-        cropped_image = image[:, crop_top:computed_crop_bottom, crop_left:computed_crop_right, :]
+        cropped_image = source_image[:, crop_top:computed_crop_bottom, crop_left:computed_crop_right, :]
 
         def _make_zero_mask(bs, h, w, device):
             return torch.zeros((bs, h, w), dtype=torch.float32, device=device)
 
         cropped_mask = None
         if mask is None or not torch.is_tensor(mask) or mask.numel() == 0:
-            cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, image.device)
+            cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, source_image.device)
         else:
             m = mask
 
@@ -162,7 +215,7 @@ class OlmDragCrop:
                 m = m.unsqueeze(0)
 
             if m.dim() != 3:
-                cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, image.device)
+                cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, source_image.device)
             else:
                 if m.shape[0] != batch_size:
                     if m.shape[0] == 1 and batch_size > 1:
@@ -181,10 +234,10 @@ class OlmDragCrop:
                 cb = max(0, min(computed_crop_bottom, mh))
 
                 if cr <= cl or cb <= ct:
-                    cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, image.device)
+                    cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, source_image.device)
                 else:
                     region = m[:, ct:cb, cl:cr]
-                    cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, image.device)
+                    cropped_mask = _make_zero_mask(batch_size, crop_height, crop_width, source_image.device)
                     rh, rw = region.shape[1], region.shape[2]
                     cropped_mask[:, :rh, :rw] = region.to(torch.float32)
 
@@ -202,7 +255,7 @@ class OlmDragCrop:
 
         original_filename = None
         if batch_size > 0:
-            img_array = (image[0].cpu().numpy() * 255).astype(np.uint8)
+            img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
             pil_image = Image.fromarray(img_array)
             temp_dir = get_temp_directory()
             filename_hash = hash(f"{node_id}_{current_width}x{current_height}")
@@ -232,6 +285,7 @@ class OlmDragCrop:
         crop_info_for_frontend = {
             **crop_payload,
             "input_hash": input_hash,
+            "clear_pasted_image": clear_pasted_on_frontend,
         }
 
         return {
