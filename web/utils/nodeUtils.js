@@ -60,6 +60,24 @@ export function removeNodeInputs(node) {
   );
 }
 
+export function removePerspInputs(node) {
+  removeInputs(node, "OlmDragPerspective", (input) =>
+    [
+      "drawing_version",
+      "pasted_image",
+      "last_width",  "last_height",
+      "tl_x",        "tl_y",
+      "tr_x",        "tr_y",
+      "br_x",        "br_y",
+      "bl_x",        "bl_y",
+      "top_bow_x",   "top_bow_y",
+      "right_bow_x", "right_bow_y",
+      "bottom_bow_x","bottom_bow_y",
+      "left_bow_x",  "left_bow_y",
+    ].includes(input.name)
+  );
+}
+
 export function applyBox(node, patch) {
   if (patch) {
     const dragStart = patch.dragStart ?? patch.newStart;

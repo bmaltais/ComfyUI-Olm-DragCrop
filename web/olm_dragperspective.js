@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { handleDrawForegroundPersp } from "./core/perspectiveRender.js";
 import { handleOnExecutedPersp } from "./handlers/onExecutedPerspHandler.js";
-import { getWidget, hideWidget } from "./utils/nodeUtils.js";
+import { getWidget, hideWidget, removePerspInputs } from "./utils/nodeUtils.js";
 import { clamp } from "./utils/geometryUtils.js";
 import { commitState } from "./core/commitState.js";
 import {
@@ -529,6 +529,7 @@ app.registerExtension({
 
     nodeType.prototype.onConfigure = function () {
       const node = this;
+      removePerspInputs(node);
 
       // Guard: old saved workflows won't have a valid value for the rotate widget
       const rotateWidget = node.widgets?.find((w) => w.name === "rotate");
@@ -576,6 +577,7 @@ app.registerExtension({
 
     nodeType.prototype.onAdded = function () {
       const node = this;
+      removePerspInputs(node);
 
       const origDown  = node.onMouseDown;
       const origMove  = node.onMouseMove;
