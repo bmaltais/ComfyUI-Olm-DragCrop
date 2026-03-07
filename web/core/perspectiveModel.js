@@ -39,32 +39,6 @@ function getRotatedDimensions(iw, ih, rotate) {
   return { width: iw, height: ih };
 }
 
-function rotatePointUnrotToRot(x, y, iw, ih, rotate) {
-  if (rotate === "90° CW") {
-    return [ih - y, x];
-  }
-  if (rotate === "90° CCW") {
-    return [y, iw - x];
-  }
-  if (rotate === "180°") {
-    return [iw - x, ih - y];
-  }
-  return [x, y];
-}
-
-function rotatePointRotToUnrot(x, y, iw, ih, rotate) {
-  if (rotate === "90° CW") {
-    return [y, ih - x];
-  }
-  if (rotate === "90° CCW") {
-    return [iw - y, x];
-  }
-  if (rotate === "180°") {
-    return [iw - x, ih - y];
-  }
-  return [x, y];
-}
-
 export function getDisplayedImageAreaInPreview(node, preview) {
   const base = getImageAreaInPreview(node, preview);
   const iw = node.properties.actualImageWidth || 0;
@@ -98,37 +72,6 @@ export function getDisplayedImageAreaInPreview(node, preview) {
     rotatedWidth: rotated.width,
     rotatedHeight: rotated.height,
   };
-}
-
-function previewToImagePixel(node, preview, px, py) {
-  const iw = node.properties.actualImageWidth || 0;
-  const ih = node.properties.actualImageHeight || 0;
-  if (!iw || !ih) return [0, 0];
-
-  const area = getDisplayedImageAreaInPreview(node, preview);
-  if (!area.width || !area.height || !area.rotatedWidth || !area.rotatedHeight) {
-    return [0, 0];
-  }
-
-  const rx = ((px - area.x) * area.rotatedWidth) / area.width;
-  const ry = ((py - area.y) * area.rotatedHeight) / area.height;
-  return rotatePointRotToUnrot(rx, ry, iw, ih, area.rotate);
-}
-
-function imagePixelToPreview(node, preview, x, y) {
-  const iw = node.properties.actualImageWidth || 0;
-  const ih = node.properties.actualImageHeight || 0;
-  if (!iw || !ih) return [0, 0];
-
-  const area = getDisplayedImageAreaInPreview(node, preview);
-  if (!area.width || !area.height || !area.rotatedWidth || !area.rotatedHeight) {
-    return [0, 0];
-  }
-
-  const [rx, ry] = rotatePointUnrotToRot(x, y, iw, ih, area.rotate);
-  const px = area.x + (rx * area.width) / area.rotatedWidth;
-  const py = area.y + (ry * area.height) / area.rotatedHeight;
-  return [px, py];
 }
 
 /**
