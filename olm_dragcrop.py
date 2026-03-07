@@ -8,18 +8,89 @@ import json
 
 DEBUG_MODE = False
 
-# Per-node-id memory of the last execution's image sources.
+# Per-node-id memory of the last execution's image sources, keyed by node_id string.
 # Used to decide whether a wired input change should override a stale pasted_image.
-_last_wire_hashes: dict   = {}   # node_id -> signature of wired tensor used last run (OlmDragPerspective)
-_last_pasted_images: dict = {}   # node_id -> pasted_image filename used last run (OlmDragPerspective)
+# Separate dicts per node class so IDs from different node types never collide.
+_persp_wire_hashes:   dict = {}   # OlmDragPerspective: node_id -> wire hash
+_persp_pasted_images: dict = {}   # OlmDragPerspective: node_id -> pasted_image filename
+_crop_wire_hashes:    dict = {}   # OlmDragCrop:        node_id -> wire hash
+_crop_pasted_images:  dict = {}   # OlmDragCrop:        node_id -> pasted_image filename
 
-# Same tracking for OlmDragCrop
-_crop_last_wire_hashes: dict   = {}   # node_id -> wire hash last run
-_crop_last_pasted_images: dict = {}   # node_id -> pasted_image filename last run
 
 def debug_print(*args, **kwargs):
     if DEBUG_MODE:
         print(*args, **kwargs)
+
+
+def _resolve_source_image(
+    image,
+    pasted_image: str,
+    wire_hashes: dict,
+    pasted_images: dict,
+    nid: str,
+    node_label: str,
+):
+    """
+    Determine the effective source image for this execution and whether to
+    signal the frontend to clear its stale pasted_image value.
+
+    Priority rules (tracked across runs via the supplied dicts keyed by nid):
+      1. No paste value  → always use wire (or raise if wire is also absent).
+      2. Paste is NEW this run (pasted_fresh=True)  → paste wins.
+      3. Paste is stale AND wire content changed    → wire wins; clear frontend.
+      4. Paste is stale AND wire unchanged          → paste wins (last user intent).
+
+    Updates wire_hashes and pasted_images in-place for the next run.
+    Returns (source_image, clear_pasted_on_frontend, input_hash).
+    """
+    wire_hash   = _compute_input_image_hash(image) if image is not None else ""
+    last_wire   = wire_hashes.get(nid, None)
+    last_pasted = pasted_images.get(nid, "")
+
+    pasted_fresh = bool(pasted_image) and (pasted_image != last_pasted)
+    wire_changed = bool(image is not None) and (wire_hash != last_wire)
+
+    clear_pasted_on_frontend = False
+
+    if not pasted_image:
+        source_image = image
+    elif pasted_fresh:
+        source_image = _load_uploaded_image_tensor(pasted_image)
+        if source_image is None:
+            source_image = image
+    elif wire_changed:
+        source_image = image
+        clear_pasted_on_frontend = True
+    else:
+        source_image = _load_uploaded_image_tensor(pasted_image)
+        if source_image is None:
+            source_image = image
+
+    if source_image is None:
+        raise ValueError(
+            f"{node_label} requires either an IMAGE input or a pasted_image upload."
+        )
+
+    effective_pasted = pasted_image if not clear_pasted_on_frontend else ""
+    wire_hashes[nid]   = wire_hash
+    pasted_images[nid] = effective_pasted
+
+    # Reuse the already-computed wire_hash when the wired image is selected;
+    # only hash again when source_image is the pasted tensor.
+    input_hash = wire_hash if source_image is image else _compute_input_image_hash(source_image)
+    return source_image, clear_pasted_on_frontend, input_hash
+
+
+def _validate_pasted_image_input(pasted_image):
+    """Shared VALIDATE_INPUTS logic for nodes that accept a pasted_image combo."""
+    if pasted_image and pasted_image != "":
+        try:
+            fp = folder_paths.get_annotated_filepath(pasted_image)
+            if not os.path.isfile(fp):
+                return f"pasted_image file not found: {pasted_image}"
+        except Exception as e:
+            return f"Invalid pasted_image path '{pasted_image}': {e}"
+    return True
 
 
 def _compute_input_image_hash(image: torch.Tensor) -> str:
@@ -82,16 +153,9 @@ class OlmDragCrop:
 
     @classmethod
     def VALIDATE_INPUTS(cls, pasted_image=None, **kwargs):
-        # Only validate the file reference when a pasted_image value is provided.
-        # The "requires IMAGE or pasted_image" guard is enforced at runtime in crop().
-        if pasted_image and pasted_image != "":
-            try:
-                fp = folder_paths.get_annotated_filepath(pasted_image)
-                if not os.path.isfile(fp):
-                    return f"pasted_image file not found: {pasted_image}"
-            except Exception as e:
-                return f"Invalid pasted_image: {e}"
-        return True
+        # Only validate the file reference; the "requires IMAGE or pasted_image" guard
+        # is enforced at runtime in crop().
+        return _validate_pasted_image_input(pasted_image)
 
     RETURN_TYPES = ("IMAGE", "MASK", "STRING")
     RETURN_NAMES = ("IMAGE", "MASK", "CROP_JSON")
@@ -118,37 +182,11 @@ class OlmDragCrop:
         print(f"[OlmDragCrop] Node {node_id} executed (Backend)")
 
         nid = str(node_id) if node_id is not None else "__unknown__"
-        wire_hash   = _compute_input_image_hash(image) if image is not None else ""
-        last_wire   = _crop_last_wire_hashes.get(nid, None)
-        last_pasted = _crop_last_pasted_images.get(nid, "")
-
-        pasted_fresh = bool(pasted_image) and (pasted_image != last_pasted)
-        wire_changed = bool(image is not None) and (wire_hash != last_wire)
-
-        clear_pasted_on_frontend = False
-
-        if not pasted_image:
-            source_image = image
-        elif pasted_fresh:
-            source_image = _load_uploaded_image_tensor(pasted_image)
-            if source_image is None:
-                source_image = image
-        elif wire_changed:
-            source_image = image
-            clear_pasted_on_frontend = True
-        else:
-            source_image = _load_uploaded_image_tensor(pasted_image)
-            if source_image is None:
-                source_image = image
-
-        if source_image is None:
-            raise ValueError("OlmDragCrop requires either an IMAGE input or a pasted_image upload.")
-
-        effective_pasted = pasted_image if (not clear_pasted_on_frontend) else ""
-        _crop_last_wire_hashes[nid]   = wire_hash
-        _crop_last_pasted_images[nid] = effective_pasted
-
-        input_hash = wire_hash if source_image is image else _compute_input_image_hash(source_image)
+        source_image, clear_pasted_on_frontend, input_hash = _resolve_source_image(
+            image, pasted_image,
+            _crop_wire_hashes, _crop_pasted_images,
+            nid, "OlmDragCrop",
+        )
 
         batch_size, current_height, current_width, channels = source_image.shape
 
@@ -491,14 +529,7 @@ class OlmDragPerspective:
         # but uploads may land in subfolders (e.g. "pasted/image.png"). Rather than
         # rebuilding the full recursive list on every validation call, we accept any
         # non-empty value and verify the file actually exists on disk.
-        if pasted_image and pasted_image != "":
-            try:
-                fp = folder_paths.get_annotated_filepath(pasted_image)
-                if not os.path.isfile(fp):
-                    return f"pasted_image file not found: {pasted_image}"
-            except Exception as e:
-                return f"Invalid pasted_image path '{pasted_image}': {e}"
-        return True
+        return _validate_pasted_image_input(pasted_image)
 
     def correct(
         self,
@@ -520,53 +551,12 @@ class OlmDragPerspective:
     ):
         print(f"[OlmDragPerspective] Node {node_id} executed (Backend)")
 
-        # --- Source image selection ---
-        # Priority rules (tracked across runs via module-level dicts keyed by node_id):
-        #
-        #  1. No paste value → always use wire (or raise if no wire either)
-        #  2. Paste is NEW this run (pasted_fresh=True) → paste wins regardless of wire
-        #  3. Paste is stale AND wire content changed → wire wins; signal frontend to clear
-        #  4. Paste is stale AND wire unchanged → paste still wins (last user intent)
-
         nid = str(node_id) if node_id is not None else "__unknown__"
-        wire_hash     = _compute_input_image_hash(image) if image is not None else ""
-        last_wire     = _last_wire_hashes.get(nid, None)   # None = first run
-        last_pasted   = _last_pasted_images.get(nid, "")   # "" = never pasted
-
-        pasted_fresh  = bool(pasted_image) and (pasted_image != last_pasted)
-        wire_changed  = bool(image is not None) and (wire_hash != last_wire)
-
-        clear_pasted_on_frontend = False
-
-        if not pasted_image:
-            # Case 1 — no paste, use wire
-            source_image = image
-        elif pasted_fresh:
-            # Case 2 — user just dropped/pasted a new file
-            source_image = _load_uploaded_image_tensor(pasted_image)
-            if source_image is None:
-                source_image = image
-        elif wire_changed:
-            # Case 3 — stale paste but wire content changed → wire wins
-            source_image = image
-            clear_pasted_on_frontend = True
-        else:
-            # Case 4 — stale paste, wire unchanged → keep using paste
-            source_image = _load_uploaded_image_tensor(pasted_image)
-            if source_image is None:
-                source_image = image
-
-        if source_image is None:
-            raise ValueError("OlmDragPerspective requires either an IMAGE input or a pasted_image upload.")
-
-        # Update per-node memory for next run
-        effective_pasted = pasted_image if (not clear_pasted_on_frontend) else ""
-        _last_wire_hashes[nid]   = wire_hash
-        _last_pasted_images[nid] = effective_pasted
-
-        # Reuse the already-computed wire_hash when the wired image was selected;
-        # only hash again when source_image is the pasted tensor (a different object).
-        input_hash = wire_hash if source_image is image else _compute_input_image_hash(source_image)
+        source_image, clear_pasted_on_frontend, input_hash = _resolve_source_image(
+            image, pasted_image,
+            _persp_wire_hashes, _persp_pasted_images,
+            nid, "OlmDragPerspective",
+        )
 
         batch_size, current_height, current_width, channels = source_image.shape
 
