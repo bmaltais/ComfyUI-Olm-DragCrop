@@ -52,6 +52,7 @@ export function removeNodeInputs(node) {
   removeInputs(node, "OlmDragCrop", (input) =>
     [
       "drawing_version",
+      "pasted_image",
       "crop_width",
       "crop_height",
       "last_width",

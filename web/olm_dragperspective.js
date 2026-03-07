@@ -1,5 +1,10 @@
 import { app } from "../../scripts/app.js";
 import { handleDrawForegroundPersp } from "./core/perspectiveRender.js";
+import {
+  createPasteHandler,
+  installPasteDropHooks,
+  showUploadedPreview,
+} from "./utils/pasteDropUtils.js";
 import { handleOnExecutedPersp } from "./handlers/onExecutedPerspHandler.js";
 import { getWidget, hideWidget, removePerspInputs } from "./utils/nodeUtils.js";
 import { clamp } from "./utils/geometryUtils.js";
@@ -293,196 +298,6 @@ app.registerExtension({
       return true;
     }
 
-    function isImageFile(file) {
-      if (!file) return false;
-      if (typeof file.type === "string" && file.type.startsWith("image/")) {
-        return true;
-      }
-      const n = String(file.name || "").toLowerCase();
-      return /\.(png|jpe?g|webp|bmp|gif|tiff?)$/.test(n);
-    }
-
-    function extractFirstImageFile(args) {
-      for (const a of args) {
-        if (!a) continue;
-
-        if (isImageFile(a)) return a;
-
-        if (Array.isArray(a)) {
-          const arrFile = a.find((f) => isImageFile(f));
-          if (arrFile) return arrFile;
-        }
-
-        if (typeof FileList !== "undefined" && a instanceof FileList && a.length) {
-          for (const f of a) {
-            if (isImageFile(f)) return f;
-          }
-        }
-
-        const dtFiles = a?.dataTransfer?.files;
-        if (dtFiles?.length) {
-          for (const f of dtFiles) {
-            if (isImageFile(f)) return f;
-          }
-        }
-
-        const dtItems = a?.dataTransfer?.items;
-        if (dtItems?.length) {
-          for (const item of dtItems) {
-            const f = item?.kind === "file" && typeof item.getAsFile === "function"
-              ? item.getAsFile()
-              : null;
-            if (f && isImageFile(f)) return f;
-          }
-        }
-
-        const clipFiles = a?.clipboardData?.files;
-        if (clipFiles?.length) {
-          for (const f of clipFiles) {
-            if (isImageFile(f)) return f;
-          }
-        }
-      }
-      return null;
-    }
-
-    function hasImageItems(e) {
-      const items = e?.dataTransfer?.items;
-      if (!items) return false;
-      for (const item of items) {
-        // Match Comfy default drag targeting: accept file drags even if MIME is missing.
-        if (item?.kind === "file") {
-          return true;
-        }
-      }
-      return false;
-    }
-
-    async function uploadImageToInput(file) {
-      const isPasted =
-        file?.name === "image.png" &&
-        typeof file?.lastModified === "number" &&
-        Math.abs(file.lastModified - Date.now()) < 2000;
-
-      const body = new FormData();
-      body.append("image", file, file.name || "pasted_image.png");
-      body.append("type", "input");
-      body.append("overwrite", "false");
-      if (isPasted) body.append("subfolder", "pasted");
-
-      const res = await app.api.fetchApi("/upload/image", {
-        method: "POST",
-        body,
-      });
-
-      if (!res?.ok) {
-        throw new Error(`Image upload failed (${res?.status || "unknown"})`);
-      }
-
-      const payload = await res.json();
-      if (payload?.subfolder) {
-        return `${payload.subfolder}/${payload.name || payload.filename || file.name}`;
-      }
-      return payload?.name || payload?.filename || file.name;
-    }
-
-    function splitUploadedPath(uploadedPath) {
-      const p = String(uploadedPath || "");
-      const ix = p.lastIndexOf("/");
-      if (ix === -1) return { subfolder: "", filename: p };
-      return {
-        subfolder: p.slice(0, ix),
-        filename: p.slice(ix + 1),
-      };
-    }
-
-    function showUploadedPreview(node, uploadedPath) {
-      const { subfolder, filename } = splitUploadedPath(uploadedPath);
-      if (!filename) {
-        console.warn("[OlmDragPersp] showUploadedPreview - empty filename, aborting");
-        return;
-      }
-
-      const params = new URLSearchParams({
-        filename,
-        type: "input",
-        subfolder,
-        rand: String(Date.now()),
-      });
-
-      const imageUrl = app.api.apiURL(`/view?${params.toString()}`);
-      node.image.onload = () => {
-        node.imageLoaded = true;
-
-        const newWidth  = node.image.naturalWidth;
-        const newHeight = node.image.naturalHeight;
-        node.properties.actualImageWidth  = newWidth;
-        node.properties.actualImageHeight = newHeight;
-
-        // Resize node and reset corners, matching what onExecutedPersp does for new images
-        node._previewAreaCache = null;
-        if (node.onResize) node.onResize(node.size);
-        const newSize = node.computeSize();
-        if (newSize && newSize[0] > 0 && newSize[1] > 0) node.size = newSize;
-
-        node._previewAreaCache = null;
-        const preview = getPreviewAreaCached(node);
-        resetCorners(node, preview);
-
-        // Prime last_width/last_height so the backend doesn't see a "resolution
-        // change" on first run (which would cause it to ignore the user's corners).
-        const lwWidget = getWidget(node, "last_width");
-        if (lwWidget) lwWidget.value = newWidth;
-        const lhWidget = getWidget(node, "last_height");
-        if (lhWidget) lhWidget.value = newHeight;
-
-        // Tell onExecutedPersp to preserve corners on first run after a drop,
-        // since we already reset them here and the user may have adjusted them.
-        node.properties._preserveCorners = true;
-
-        node.setDirtyCanvas(true, true);
-      };
-      node.image.onerror = (err) => {
-        console.warn("[OlmDragPersp] node.image FAILED to load:", imageUrl, err);
-        node.imageLoaded = false;
-      };
-      node.image.src = imageUrl;
-    }
-
-    async function setPastedImageFromFile(node, file) {
-      if (!isImageFile(file)) return false;
-
-      // Dedup guard: multiple hooks (onDragDrop, pasteFile, onPasteFile, pasteFiles) may fire
-      // simultaneously for the same user action once previewMediaType="image" is set.
-      const dedupeKey = `${file.name}:${file.size}:${file.lastModified}`;
-      if (node._pasteDedupeKey === dedupeKey) return false;
-      node._pasteDedupeKey = dedupeKey;
-      setTimeout(() => { if (node._pasteDedupeKey === dedupeKey) node._pasteDedupeKey = null; }, 1000);
-
-      const uploadedName = await uploadImageToInput(file);
-
-      const pastedWidget = getWidget(node, "pasted_image");
-      if (!pastedWidget) {
-        throw new Error("pasted_image widget not found on OlmDragPerspective node");
-      }
-
-      const values = pastedWidget.options?.values;
-      if (Array.isArray(values) && !values.includes(uploadedName)) {
-        values.push(uploadedName);
-      }
-
-      pastedWidget.value = uploadedName;
-      pastedWidget.callback?.(uploadedName);
-
-      const dv = getWidget(node, "drawing_version");
-      if (dv) dv.value = Date.now();
-
-      showUploadedPreview(node, uploadedName);
-
-      node.setDirtyCanvas(true, true);
-      return true;
-    }
-
     // -------------------------------------------------------------------------
     // Prototype methods
     // -------------------------------------------------------------------------
@@ -591,57 +406,15 @@ app.registerExtension({
         if (node.dragging) onPerspMouseUp(node, e, pos, preview);
       };
 
-      const originalOnDragOver = node.onDragOver;
-      node.onDragOver = function (e) {
-        const handled = originalOnDragOver?.call(this, e);
-        if (handled) return true;
-        return hasImageItems(e);
-      };
-
-      // Note: we intentionally do NOT delegate to the original onDragDrop.
-      // ComfyUI's built-in image_upload handler returns true from onDragDrop,
-      // which would short-circuit our preview display code. Our setPastedImageFromFile
-      // already handles everything the built-in does (upload + widget update) plus
-      // the canvas preview that the built-in lacks.
-      node.onDragDrop = function (...args) {
-        const file = extractFirstImageFile(args);
-        if (!file || !isImageFile(file)) {
-          console.warn("[OlmDragPersp] No image file found in drop args");
-          return false;
-        }
-
-        setPastedImageFromFile(node, file).catch((err) => {
-          console.warn("[OlmDragPerspective] Failed to handle dropped image:", err);
+      const showPreviewFn = (n, uploadedName) =>
+        showUploadedPreview(n, uploadedName, "[OlmDragPerspective]", (n, preview) => {
+          resetCorners(n, preview);
+          // Tell onExecutedPersp to preserve corners on first run after a drop,
+          // since we already reset them here and the user may have adjusted them.
+          n.properties._preserveCorners = true;
         });
-
-        return true;
-      };
-
-      // Same pattern: don't delegate to originals — they return true and block our preview.
-      node.onPasteFile = function (...args) {
-        const file = extractFirstImageFile(args);
-        if (!file || !isImageFile(file)) return false;
-        setPastedImageFromFile(node, file).catch((err) => {
-          console.warn("[OlmDragPerspective] Failed to handle pasted image:", err);
-        });
-        return true;
-      };
-
-      // Match Comfy's default paste pipeline: selected nodes receive pasteFile/pasteFiles.
-      node.pasteFile = function (file) {
-        if (!file || !isImageFile(file)) return;
-        setPastedImageFromFile(node, file).catch((err) => {
-          console.warn("[OlmDragPerspective] Failed to handle pasteFile image:", err);
-        });
-      };
-
-      node.pasteFiles = function (files) {
-        const file = Array.isArray(files) ? files.find((f) => isImageFile(f)) : null;
-        if (!file) return;
-        setPastedImageFromFile(node, file).catch((err) => {
-          console.warn("[OlmDragPerspective] Failed to handle pasteFiles image:", err);
-        });
-      };
+      const pasteHandler = createPasteHandler(node, "[OlmDragPerspective]", showPreviewFn);
+      installPasteDropHooks(node, pasteHandler, "[OlmDragPerspective]");
     };
 
     nodeType.prototype.onExecuted = function (message) {

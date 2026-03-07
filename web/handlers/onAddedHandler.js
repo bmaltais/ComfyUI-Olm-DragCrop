@@ -7,6 +7,20 @@ import {
 
 import { removeNodeInputs } from "../utils/nodeUtils.js";
 import { getPreviewAreaCached } from "../ui/nodeLayout.js";
+import { resetCrop } from "../core/cropModel.js";
+import {
+  showUploadedPreview,
+  createPasteHandler,
+  installPasteDropHooks,
+} from "../utils/pasteDropUtils.js";
+
+const LOG_PREFIX = "[OlmDragCrop]";
+
+function dragCropAfterPreview(node, preview) {
+  resetCrop(node, preview);
+}
+
+// ---------------------------------------------------------------------------
 
 export function handleOnAdded(node) {
   removeNodeInputs(node);
@@ -43,4 +57,9 @@ export function handleOnAdded(node) {
     if (wasHandled) return true;
     return handleOnMouseLeave?.(node, e, preview);
   };
+
+  const showPreviewFn = (n, uploadedName) =>
+    showUploadedPreview(n, uploadedName, LOG_PREFIX, dragCropAfterPreview);
+  const pasteHandler = createPasteHandler(node, LOG_PREFIX, showPreviewFn);
+  installPasteDropHooks(node, pasteHandler, LOG_PREFIX);
 }
