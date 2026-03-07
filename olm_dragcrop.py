@@ -17,6 +17,7 @@ import torch
 import numpy as np
 from PIL import Image
 import os
+import hashlib
 import folder_paths
 from folder_paths import get_temp_directory
 import json
@@ -182,6 +183,26 @@ def _load_uploaded_image_tensor(image_name: str):
     with Image.open(image_path) as im:
         arr = np.array(im.convert("RGB")).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None,]
+
+
+def _prune_node_preview_files(temp_dir: str, prefix: str, keep_filename: str):
+    """Delete old per-node preview JPEGs in temp, keeping only the active one."""
+    try:
+        for name in os.listdir(temp_dir):
+            if not name.startswith(prefix) or not name.endswith(".jpg"):
+                continue
+            if name == keep_filename:
+                continue
+            path = os.path.join(temp_dir, name)
+            if os.path.isfile(path):
+                os.remove(path)
+    except Exception as e:
+        debug_print(f"[OlmDrag] Preview cleanup skipped: {e}")
+
+
+def _preview_filename_hash(input_hash: str) -> str:
+    """Return a filesystem-safe digest token derived from the input hash string."""
+    return hashlib.sha1(input_hash.encode("utf-8")).hexdigest()
 
 
 class OlmDragCrop:
@@ -403,7 +424,11 @@ class OlmDragCrop:
         # Uses memory cache for fast lookup and file-based persistence for robustness.
         original_filename = None
         cached_hash, cached_filename = _crop_preview_cache.get(nid, (None, None))
-        if cached_hash == input_hash and cached_filename:
+        if not input_hash:
+            # Hash failures produce an empty key; skip cache lookup/save to avoid
+            # reusing stale preview files from previous runs/sessions.
+            original_filename = None
+        elif cached_hash == input_hash and cached_filename:
             # Memory cache hit - reuse existing preview
             original_filename = cached_filename
         elif batch_size > 0:
@@ -412,7 +437,7 @@ class OlmDragCrop:
 
             # Use content-based hash in filename to allow for caching
             # We use the already computed input_hash from _resolve_source_image
-            filename_hash = input_hash.replace("|", "_").replace(":", "_")
+            filename_hash = _preview_filename_hash(input_hash)
             original_filename = f"dragcrop_{node_id}_{filename_hash}.jpg"
             filepath = os.path.join(temp_dir, original_filename)
 
@@ -430,6 +455,11 @@ class OlmDragCrop:
 
             # Update memory cache for next execution
             if original_filename:
+                _prune_node_preview_files(
+                    temp_dir,
+                    prefix=f"dragcrop_{node_id}_",
+                    keep_filename=original_filename,
+                )
                 _crop_preview_cache[nid] = (input_hash, original_filename)
 
         crop_payload = {
@@ -891,7 +921,11 @@ class OlmDragPerspective:
         # Uses memory cache for fast lookup and file-based persistence for robustness.
         original_filename = None
         cached_hash, cached_filename = _persp_preview_cache.get(nid, (None, None))
-        if cached_hash == input_hash and cached_filename:
+        if not input_hash:
+            # Hash failures produce an empty key; skip cache lookup/save to avoid
+            # reusing stale preview files from previous runs/sessions.
+            original_filename = None
+        elif cached_hash == input_hash and cached_filename:
             # Memory cache hit - reuse existing preview
             original_filename = cached_filename
         elif batch_size > 0:
@@ -899,7 +933,7 @@ class OlmDragPerspective:
             os.makedirs(temp_dir, exist_ok=True)
 
             # Use content-based hash in filename to allow for caching
-            filename_hash = input_hash.replace("|", "_").replace(":", "_")
+            filename_hash = _preview_filename_hash(input_hash)
             original_filename = f"dragpersp_{node_id}_{filename_hash}.jpg"
             filepath = os.path.join(temp_dir, original_filename)
 
@@ -917,6 +951,11 @@ class OlmDragPerspective:
 
             # Update memory cache for next execution
             if original_filename:
+                _prune_node_preview_files(
+                    temp_dir,
+                    prefix=f"dragpersp_{node_id}_",
+                    keep_filename=original_filename,
+                )
                 _persp_preview_cache[nid] = (input_hash, original_filename)
 
         persp_payload = {
