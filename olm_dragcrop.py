@@ -208,12 +208,30 @@ def _preview_filename_hash(input_hash: str) -> str:
 def _sanitize_node_id(node_id: str) -> str:
     """
     Sanitize the node_id for use in filenames and cache keys.
-    Allows only alphanumeric characters, underscores, and hyphens.
+    Allows only ASCII alphanumeric characters, underscores, and hyphens,
+    and truncates to a reasonable maximum length to avoid filesystem issues.
     """
     if node_id is None:
         return "unknown"
     nid = str(node_id)
-    return "".join(c for c in nid if c.isalnum() or c in ("_", "-"))
+    # Allow only ASCII [A-Za-z0-9_-] to keep filenames portable and predictable.
+    sanitized = "".join(
+        c
+        for c in nid
+        if (
+            ("A" <= c <= "Z")
+            or ("a" <= c <= "z")
+            or ("0" <= c <= "9")
+            or c in ("_", "-")
+        )
+    )
+    if not sanitized:
+        sanitized = "unknown"
+    # Truncate to avoid excessively long filenames (e.g., from malicious input).
+    max_len = 64
+    if len(sanitized) > max_len:
+        sanitized = sanitized[:max_len]
+    return sanitized
 
 
 class OlmDragCrop:
