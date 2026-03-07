@@ -20,3 +20,4 @@ Code quality learnings specific to this codebase.
 - Extract helper methods from `crop()` to reduce complexity (53 local variables, 105 statements)
 - Add method docstrings for public methods (INPUT_TYPES, crop, correct, interpret)
 - Address too-many-arguments warnings with helper dataclasses or configs
+

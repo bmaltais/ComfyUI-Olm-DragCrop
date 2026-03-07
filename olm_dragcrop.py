@@ -67,6 +67,13 @@ _persp_pasted_images = LRUCache(1000)  # OlmDragPerspective: node_id -> pasted_i
 _crop_wire_hashes = LRUCache(1000)  # OlmDragCrop:        node_id -> wire hash
 _crop_pasted_images = LRUCache(1000)  # OlmDragCrop:        node_id -> pasted_image filename
 
+# Preview caching: skip expensive preview saves when input hasn't changed.
+# Maps node_id -> (input_hash, preview_filename) to avoid redundant GPU→CPU
+# transfer, numpy conversion, PIL encoding, and disk I/O.
+# LRU eviction prevents memory leaks in long-running sessions.
+_crop_preview_cache = LRUCache(1000)  # OlmDragCrop:        node_id -> (hash, filename)
+_persp_preview_cache = LRUCache(1000)  # OlmDragPerspective: node_id -> (hash, filename)
+
 
 def debug_print(*args, **kwargs):
     if DEBUG_MODE:
@@ -393,8 +400,13 @@ class OlmDragCrop:
 
         # Performance optimization: skip preview save when input unchanged.
         # Avoids GPU→CPU transfer + numpy conversion + PIL encoding + disk I/O (~10-50ms).
+        # Uses memory cache for fast lookup and file-based persistence for robustness.
         original_filename = None
-        if batch_size > 0:
+        cached_hash, cached_filename = _crop_preview_cache.get(nid, (None, None))
+        if cached_hash == input_hash and cached_filename:
+            # Memory cache hit - reuse existing preview
+            original_filename = cached_filename
+        elif batch_size > 0:
             temp_dir = get_temp_directory()
             os.makedirs(temp_dir, exist_ok=True)
 
@@ -405,7 +417,7 @@ class OlmDragCrop:
             filepath = os.path.join(temp_dir, original_filename)
 
             if not os.path.isfile(filepath):
-                # Only save if the file doesn't exist
+                # Only save if the file doesn't exist (file-based cache miss)
                 img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
                 pil_image = Image.fromarray(img_array).convert("RGB")
                 try:
@@ -415,6 +427,10 @@ class OlmDragCrop:
                 except Exception as e:
                     print(f"[OlmDragCrop] Error saving preview image: {e}")
                     original_filename = None
+
+            # Update memory cache for next execution
+            if original_filename:
+                _crop_preview_cache[nid] = (input_hash, original_filename)
 
         crop_payload = {
             "left": crop_left,
@@ -870,9 +886,15 @@ class OlmDragPerspective:
 
         output_image = torch.stack(warped_frames, dim=0)
 
-        # Save preview of the original (unwarped) frame 0 for the frontend
+        # Performance optimization: skip preview save when input unchanged.
+        # Avoids GPU→CPU transfer + numpy conversion + PIL encoding + disk I/O (~10-50ms).
+        # Uses memory cache for fast lookup and file-based persistence for robustness.
         original_filename = None
-        if batch_size > 0:
+        cached_hash, cached_filename = _persp_preview_cache.get(nid, (None, None))
+        if cached_hash == input_hash and cached_filename:
+            # Memory cache hit - reuse existing preview
+            original_filename = cached_filename
+        elif batch_size > 0:
             temp_dir = get_temp_directory()
             os.makedirs(temp_dir, exist_ok=True)
 
@@ -882,7 +904,7 @@ class OlmDragPerspective:
             filepath = os.path.join(temp_dir, original_filename)
 
             if not os.path.isfile(filepath):
-                # Only save if the file doesn't exist
+                # Only save if the file doesn't exist (file-based cache miss)
                 img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
                 pil_preview = Image.fromarray(img_array).convert("RGB")
                 try:
@@ -892,6 +914,10 @@ class OlmDragPerspective:
                 except Exception as e:
                     print(f"[OlmDragPerspective] Error saving preview image: {e}")
                     original_filename = None
+
+            # Update memory cache for next execution
+            if original_filename:
+                _persp_preview_cache[nid] = (input_hash, original_filename)
 
         persp_payload = {
             "tl": [tl_x, tl_y],
