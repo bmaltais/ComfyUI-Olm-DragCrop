@@ -6,6 +6,7 @@ import {
   resetCorners,
   updateCornersFromWidgets,
   updateWidgetsFromCorners,
+  getImageAreaInPreview,
 } from "../core/perspectiveModel.js";
 
 export function handleOnExecutedPersp(node, message) {
@@ -59,17 +60,16 @@ export function handleOnExecutedPersp(node, message) {
     if (shouldReset || resolutionChanged) {
       resetCorners(node, preview);
     } else if (backendData) {
-      // Restore corners from backend pixel values
-      const w = newWidth;
-      const h = newHeight;
-      const sx = preview.width  / w;
-      const sy = preview.height / h;
+      // Restore corners from backend pixel values, accounting for canvas extend
+      const imgArea = getImageAreaInPreview(node, preview);
+      const sx = imgArea.width  / newWidth;
+      const sy = imgArea.height / newHeight;
 
       node.properties.perspCorners = {
-        tl: [backendData.tl[0] * sx, backendData.tl[1] * sy],
-        tr: [backendData.tr[0] * sx, backendData.tr[1] * sy],
-        br: [backendData.br[0] * sx, backendData.br[1] * sy],
-        bl: [backendData.bl[0] * sx, backendData.bl[1] * sy],
+        tl: [backendData.tl[0] * sx + imgArea.x, backendData.tl[1] * sy + imgArea.y],
+        tr: [backendData.tr[0] * sx + imgArea.x, backendData.tr[1] * sy + imgArea.y],
+        br: [backendData.br[0] * sx + imgArea.x, backendData.br[1] * sy + imgArea.y],
+        bl: [backendData.bl[0] * sx + imgArea.x, backendData.bl[1] * sy + imgArea.y],
       };
       updateWidgetsFromCorners(node, preview);
     }

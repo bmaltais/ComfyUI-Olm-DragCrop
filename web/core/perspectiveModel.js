@@ -1,17 +1,42 @@
 import { commitState } from "./commitState.js";
 import { setWidgetValue, getWidget } from "../utils/nodeUtils.js";
 import { clamp } from "../utils/geometryUtils.js";
+import { CANVAS_EXTEND_MAP } from "../constants.js";
 
 /**
- * Initialize perspective corners to the full preview rectangle.
+ * Return the sub-area of the preview where the actual image is drawn.
+ * When canvasExtend = 0, this equals the full preview.
+ * When canvasExtend > 0 (e.g. 0.5), the image is drawn in the center with
+ * 50% of the image width added as padding on each side.
+ *
+ * The returned {x, y, width, height} are in preview-local coordinates
+ * (i.e. relative to preview.x / preview.y, NOT absolute canvas coords).
+ */
+export function getImageAreaInPreview(node, preview) {
+  const extendLabel = node.properties.canvasExtendLabel || "None";
+  const extend = CANVAS_EXTEND_MAP[extendLabel] ?? 0;
+  if (extend === 0) {
+    return { x: 0, y: 0, width: preview.width, height: preview.height };
+  }
+  const scale = 1 / (1 + 2 * extend);
+  const w = preview.width * scale;
+  const h = preview.height * scale;
+  const x = (preview.width - w) / 2;
+  const y = (preview.height - h) / 2;
+  return { x, y, width: w, height: h };
+}
+
+/**
+ * Initialize perspective corners to the image rectangle (accounting for canvas extend).
  * Returns {tl, tr, br, bl} in preview-space coordinates.
  */
-export function initCorners(preview) {
+export function initCorners(preview, imgArea) {
+  const area = imgArea || { x: 0, y: 0, width: preview.width, height: preview.height };
   return {
-    tl: [0, 0],
-    tr: [preview.width, 0],
-    br: [preview.width, preview.height],
-    bl: [0, preview.height],
+    tl: [area.x, area.y],
+    tr: [area.x + area.width, area.y],
+    br: [area.x + area.width, area.y + area.height],
+    bl: [area.x, area.y + area.height],
   };
 }
 
@@ -43,7 +68,7 @@ export function getCornerHit(corners, localPos, handleSize = 8) {
 }
 
 /**
- * Clamp all corners to stay within the preview area.
+ * Clamp all corners to stay within the full preview area (including extended canvas).
  */
 export function clampCorners(corners, preview) {
   const result = {};
@@ -58,23 +83,26 @@ export function clampCorners(corners, preview) {
 
 /**
  * Convert preview-space corners → image-pixel widgets and sync them.
+ * Corners outside the image area (in the extended canvas) produce negative
+ * or > image-size pixel values, which is intentional.
  */
 export function updateWidgetsFromCorners(node, preview) {
   const corners = node.properties.perspCorners;
   if (!corners) return;
 
-  const scaleX = node.properties.actualImageWidth / preview.width;
-  const scaleY = node.properties.actualImageHeight / preview.height;
+  const imgArea = getImageAreaInPreview(node, preview);
+  const scaleX = node.properties.actualImageWidth / imgArea.width;
+  const scaleY = node.properties.actualImageHeight / imgArea.height;
 
   const widgetMap = {
-    tl_x: Math.round(corners.tl[0] * scaleX),
-    tl_y: Math.round(corners.tl[1] * scaleY),
-    tr_x: Math.round(corners.tr[0] * scaleX),
-    tr_y: Math.round(corners.tr[1] * scaleY),
-    br_x: Math.round(corners.br[0] * scaleX),
-    br_y: Math.round(corners.br[1] * scaleY),
-    bl_x: Math.round(corners.bl[0] * scaleX),
-    bl_y: Math.round(corners.bl[1] * scaleY),
+    tl_x: Math.round((corners.tl[0] - imgArea.x) * scaleX),
+    tl_y: Math.round((corners.tl[1] - imgArea.y) * scaleY),
+    tr_x: Math.round((corners.tr[0] - imgArea.x) * scaleX),
+    tr_y: Math.round((corners.tr[1] - imgArea.y) * scaleY),
+    br_x: Math.round((corners.br[0] - imgArea.x) * scaleX),
+    br_y: Math.round((corners.br[1] - imgArea.y) * scaleY),
+    bl_x: Math.round((corners.bl[0] - imgArea.x) * scaleX),
+    bl_y: Math.round((corners.bl[1] - imgArea.y) * scaleY),
   };
 
   for (const [name, val] of Object.entries(widgetMap)) {
@@ -91,8 +119,9 @@ export function updateCornersFromWidgets(node, preview) {
   const ih = node.properties.actualImageHeight;
   if (!iw || !ih || !preview.width || !preview.height) return null;
 
-  const scaleX = preview.width / iw;
-  const scaleY = preview.height / ih;
+  const imgArea = getImageAreaInPreview(node, preview);
+  const scaleX = imgArea.width / iw;
+  const scaleY = imgArea.height / ih;
 
   function readWidget(name) {
     const w = getWidget(node, name);
@@ -100,10 +129,10 @@ export function updateCornersFromWidgets(node, preview) {
   }
 
   const corners = {
-    tl: [readWidget("tl_x") * scaleX, readWidget("tl_y") * scaleY],
-    tr: [readWidget("tr_x") * scaleX, readWidget("tr_y") * scaleY],
-    br: [readWidget("br_x") * scaleX, readWidget("br_y") * scaleY],
-    bl: [readWidget("bl_x") * scaleX, readWidget("bl_y") * scaleY],
+    tl: [readWidget("tl_x") * scaleX + imgArea.x, readWidget("tl_y") * scaleY + imgArea.y],
+    tr: [readWidget("tr_x") * scaleX + imgArea.x, readWidget("tr_y") * scaleY + imgArea.y],
+    br: [readWidget("br_x") * scaleX + imgArea.x, readWidget("br_y") * scaleY + imgArea.y],
+    bl: [readWidget("bl_x") * scaleX + imgArea.x, readWidget("bl_y") * scaleY + imgArea.y],
   };
 
   node.properties.perspCorners = corners;
@@ -111,10 +140,11 @@ export function updateCornersFromWidgets(node, preview) {
 }
 
 /**
- * Reset corners to the full image (full preview rectangle) and sync widgets.
+ * Reset corners to the image boundaries (accounting for canvas extend) and sync widgets.
  */
 export function resetCorners(node, preview) {
-  const corners = initCorners(preview);
+  const imgArea = getImageAreaInPreview(node, preview);
+  const corners = initCorners(preview, imgArea);
   node.properties.perspCorners = corners;
   updateWidgetsFromCorners(node, preview);
   return corners;

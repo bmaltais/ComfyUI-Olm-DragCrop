@@ -10,12 +10,10 @@ import {
   handleResize,
 } from "./ui/nodeLayout.js";
 import {
-  initCorners,
   getCornerHit,
-  clampCorners,
   resetCorners,
-  updateWidgetsFromCorners,
   updateCornersFromWidgets,
+  updateWidgetsFromCorners,
 } from "./core/perspectiveModel.js";
 import {
   DEFAULT_SIZE,
@@ -23,6 +21,7 @@ import {
   colorOptions,
   WIDGET_ROW_H,
   TEXTCONTENT,
+  CANVAS_EXTEND_OPTIONS,
 } from "./constants.js";
 import { showConfirmDialog } from "./ui/confirmDialog.js";
 
@@ -47,6 +46,7 @@ app.registerExtension({
         box_color: colorOptions.find((o) => o.name === DEFAULT_COLOR)?.value || "#d5ff6b",
         lastOutWidth:  null,
         lastOutHeight: null,
+        canvasExtendLabel: "None",
       };
 
       for (const key in defaults) {
@@ -125,12 +125,34 @@ app.registerExtension({
         { values: colorNames }
       );
 
+      // Canvas Extend
+      node.addWidget(
+        "combo",
+        "Canvas Extend",
+        node.properties.canvasExtendLabel || "None",
+        (value) => {
+          node.properties.canvasExtendLabel = value;
+          // Re-map corners from pixel widgets into the new preview space
+          const preview = getPreviewAreaCached(node);
+          if (node.properties.perspCorners) {
+            updateCornersFromWidgets(node, preview);
+          }
+          commitState(node);
+          node.setDirtyCanvas(true);
+        },
+        { values: CANVAS_EXTEND_OPTIONS }
+      );
+
       // Reset Perspective
       node.addWidget("button", "Reset Perspective", "reset_persp", () => {
         showConfirmDialog(
           "Reset perspective corners to the full image?",
           (confirmed) => {
             if (!confirmed) return;
+            // Reset canvas extend to None
+            node.properties.canvasExtendLabel = "None";
+            const extendWidget = node.widgets?.find((w) => w.name === "Canvas Extend");
+            if (extendWidget) extendWidget.value = "None";
             const preview = getPreviewAreaCached(node);
             resetCorners(node, preview);
             commitState(node);
@@ -235,10 +257,17 @@ app.registerExtension({
 
     nodeType.prototype.onConfigure = function () {
       const node = this;
-      // Restore corner widgets after load
+
+      // Sync canvasExtendLabel from the serialized combo widget value
+      const extendWidget = node.widgets?.find((w) => w.name === "Canvas Extend");
+      if (extendWidget && extendWidget.value) {
+        node.properties.canvasExtendLabel = extendWidget.value;
+      }
+
+      // Restore corner preview positions from pixel widgets (respects canvas extend)
       const preview = getPreviewAreaCached(node);
       if (node.properties.perspCorners) {
-        updateWidgetsFromCorners(node, preview);
+        updateCornersFromWidgets(node, preview);
       }
       const dv = getWidget(node, "drawing_version");
       if (dv) dv.value = Date.now();

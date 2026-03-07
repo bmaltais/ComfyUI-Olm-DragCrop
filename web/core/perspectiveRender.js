@@ -1,6 +1,6 @@
 import { ColorUtils } from "../utils/colorUtils.js";
 import { GRAPHICS, TEXT, TEXTCONTENT, LAYOUT } from "../constants.js";
-import { computeOutputDimensions } from "./perspectiveModel.js";
+import { computeOutputDimensions, getImageAreaInPreview } from "./perspectiveModel.js";
 
 /**
  * Draw the perspective quad overlay:
@@ -33,9 +33,9 @@ export function drawPerspectiveQuad(
   ctx.save();
 
   // --- Darken outside the quad (evenodd fill trick) ---
+  // The outer rect covers the full preview including the extended canvas area.
   ctx.fillStyle = GRAPHICS.croppedDarken;
   ctx.beginPath();
-  // Outer rect (full preview)
   ctx.rect(previewArea.x, previewArea.y, previewArea.width, previewArea.height);
   // Inner quad (counter-clockwise so evenodd punches a hole)
   ctx.moveTo(tl[0], tl[1]);
@@ -117,21 +117,47 @@ function drawPerspInfo(ctx, node, nodeCtx, offsetY) {
   ctx.restore();
 }
 
-function drawPreviewBorder(ctx, preview) {
+function drawPreviewBorder(ctx, node, preview) {
+  const imgArea = getImageAreaInPreview(node, preview);
   ctx.save();
   ctx.strokeStyle = GRAPHICS.border;
   ctx.lineWidth = GRAPHICS.borderLineWidth;
+  // Outer border (full preview including extended canvas)
   ctx.strokeRect(preview.x, preview.y, preview.width, preview.height);
+  // If canvas is extended, draw a dashed inner border around the actual image
+  if (imgArea.x > 0 || imgArea.y > 0) {
+    ctx.strokeStyle = "#444";
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(
+      preview.x + imgArea.x, preview.y + imgArea.y,
+      imgArea.width, imgArea.height
+    );
+    ctx.setLineDash([]);
+  }
   ctx.restore();
 }
 
 function drawSource(ctx, node, preview) {
+  const imgArea = getImageAreaInPreview(node, preview);
+  const hasExtend = imgArea.x > 0 || imgArea.y > 0;
+
   ctx.save();
+
+  // Fill the full preview with the extended canvas background
+  if (hasExtend) {
+    ctx.fillStyle = "#1c1c1c";
+    ctx.fillRect(preview.x, preview.y, preview.width, preview.height);
+  }
+
   if (node.imageLoaded) {
-    ctx.drawImage(node.image, preview.x, preview.y, preview.width, preview.height);
+    ctx.drawImage(
+      node.image,
+      preview.x + imgArea.x, preview.y + imgArea.y,
+      imgArea.width, imgArea.height
+    );
   } else {
     ctx.fillStyle = GRAPHICS.colorDimFill;
-    ctx.fillRect(preview.x, preview.y, preview.width, preview.height);
+    ctx.fillRect(preview.x + imgArea.x, preview.y + imgArea.y, imgArea.width, imgArea.height);
     ctx.fillStyle = TEXT.colorDimText;
     ctx.font = TEXT.fontMessage;
     ctx.textAlign = "center";
@@ -146,6 +172,7 @@ function drawSource(ctx, node, preview) {
       preview.y + preview.height / 2 + 40
     );
   }
+
   ctx.restore();
 }
 
@@ -174,9 +201,9 @@ export function handleDrawForegroundPersp(node, ctx, widgetHeight, preview) {
     outHeight: node.properties.lastOutHeight || null,
   };
 
-  drawPreviewBorder(ctx, preview);
-  drawPerspInfo(ctx, node, nodeCtx, widgetHeight);
   drawSource(ctx, node, preview);
+  drawPreviewBorder(ctx, node, preview);
+  drawPerspInfo(ctx, node, nodeCtx, widgetHeight);
 
   if (node.properties.perspCorners) {
     drawPerspectiveQuad(

@@ -272,14 +272,14 @@ class OlmDragPerspective:
             "required": {
                 "drawing_version": ("STRING", {"default": "init"}),
                 "image": ("IMAGE",),
-                "tl_x": ("INT", {"default": 0,   "min": 0, "max": 8192}),
-                "tl_y": ("INT", {"default": 0,   "min": 0, "max": 8192}),
-                "tr_x": ("INT", {"default": 512, "min": 0, "max": 8192}),
-                "tr_y": ("INT", {"default": 0,   "min": 0, "max": 8192}),
-                "br_x": ("INT", {"default": 512, "min": 0, "max": 8192}),
-                "br_y": ("INT", {"default": 512, "min": 0, "max": 8192}),
-                "bl_x": ("INT", {"default": 0,   "min": 0, "max": 8192}),
-                "bl_y": ("INT", {"default": 512, "min": 0, "max": 8192}),
+                "tl_x": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
+                "tl_y": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
+                "tr_x": ("INT", {"default": 512, "min": -8192, "max": 8192}),
+                "tr_y": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
+                "br_x": ("INT", {"default": 512, "min": -8192, "max": 8192}),
+                "br_y": ("INT", {"default": 512, "min": -8192, "max": 8192}),
+                "bl_x": ("INT", {"default": 0,   "min": -8192, "max": 8192}),
+                "bl_y": ("INT", {"default": 512, "min": -8192, "max": 8192}),
                 "last_width":  ("INT", {"default": 0}),
                 "last_height": ("INT", {"default": 0}),
             },
@@ -318,15 +318,6 @@ class OlmDragPerspective:
             br_x, br_y = current_width, current_height
             bl_x, bl_y = 0, current_height
             reset_quad_ui = True
-
-        # Clamp all corners to image bounds
-        def clamp_pt(x, y):
-            return max(0, min(x, current_width)), max(0, min(y, current_height))
-
-        tl_x, tl_y = clamp_pt(tl_x, tl_y)
-        tr_x, tr_y = clamp_pt(tr_x, tr_y)
-        br_x, br_y = clamp_pt(br_x, br_y)
-        bl_x, bl_y = clamp_pt(bl_x, bl_y)
 
         src_pts = [
             [tl_x, tl_y],
