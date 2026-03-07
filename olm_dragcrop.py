@@ -442,7 +442,7 @@ class OlmDragCrop:
             # Use content-based hash in filename to allow for caching
             # We use the already computed input_hash from _resolve_source_image
             filename_hash = _preview_filename_hash(input_hash)
-            original_filename = f"dragcrop_{node_id}_{filename_hash}.jpg"
+            original_filename = f"dragcrop_{nid}_{filename_hash}.jpg"
             filepath = os.path.join(temp_dir, original_filename)
 
             if not os.path.isfile(filepath):
@@ -461,7 +461,7 @@ class OlmDragCrop:
             if original_filename:
                 _prune_node_preview_files(
                     temp_dir,
-                    prefix=f"dragcrop_{node_id}_",
+                    prefix=f"dragcrop_{nid}_",
                     keep_filename=original_filename,
                 )
                 _crop_preview_cache[nid] = (input_hash, original_filename)
@@ -942,7 +942,7 @@ class OlmDragPerspective:
 
             # Use content-based hash in filename to allow for caching
             filename_hash = _preview_filename_hash(input_hash)
-            original_filename = f"dragpersp_{node_id}_{filename_hash}.jpg"
+            original_filename = f"dragpersp_{nid}_{filename_hash}.jpg"
             filepath = os.path.join(temp_dir, original_filename)
 
             if not os.path.isfile(filepath):
@@ -961,7 +961,7 @@ class OlmDragPerspective:
             if original_filename:
                 _prune_node_preview_files(
                     temp_dir,
-                    prefix=f"dragpersp_{node_id}_",
+                    prefix=f"dragpersp_{nid}_",
                     keep_filename=original_filename,
                 )
                 _persp_preview_cache[nid] = (input_hash, original_filename)
