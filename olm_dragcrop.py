@@ -293,18 +293,26 @@ class OlmDragCrop:
 
         original_filename = None
         if batch_size > 0:
-            img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
-            pil_image = Image.fromarray(img_array)
             temp_dir = get_temp_directory()
-            filename_hash = hash(f"{node_id}_{current_width}x{current_height}")
-            original_filename = f"dragcrop_original_{filename_hash}.png"
-            filepath = os.path.join(temp_dir, original_filename)
             os.makedirs(temp_dir, exist_ok=True)
-            try:
-                pil_image.save(filepath)
-            except Exception as e:
-                print(f"[OlmDragCrop] Error saving preview image: {e}")
-                original_filename = None
+
+            # Use content-based hash in filename to allow for caching
+            # We use the already computed input_hash from _resolve_source_image
+            filename_hash = input_hash.replace("|", "_").replace(":", "_")
+            original_filename = f"dragcrop_{node_id}_{filename_hash}.jpg"
+            filepath = os.path.join(temp_dir, original_filename)
+
+            if not os.path.isfile(filepath):
+                # Only save if the file doesn't exist
+                img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
+                pil_image = Image.fromarray(img_array).convert("RGB")
+                try:
+                    # JPEG is significantly faster to encode than PNG and produces smaller files
+                    # for high-resolution previews, reducing disk I/O and frontend load time.
+                    pil_image.save(filepath, "JPEG", quality=90)
+                except Exception as e:
+                    print(f"[OlmDragCrop] Error saving preview image: {e}")
+                    original_filename = None
 
         crop_payload = {
             "left": crop_left,
@@ -699,18 +707,25 @@ class OlmDragPerspective:
         # Save preview of the original (unwarped) frame 0 for the frontend
         original_filename = None
         if batch_size > 0:
-            img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
-            pil_preview = Image.fromarray(img_array)
             temp_dir = get_temp_directory()
-            filename_hash = hash(f"persp_{node_id}_{current_width}x{current_height}")
-            original_filename = f"dragpersp_original_{filename_hash}.png"
-            filepath = os.path.join(temp_dir, original_filename)
             os.makedirs(temp_dir, exist_ok=True)
-            try:
-                pil_preview.save(filepath)
-            except Exception as e:
-                print(f"[OlmDragPerspective] Error saving preview image: {e}")
-                original_filename = None
+
+            # Use content-based hash in filename to allow for caching
+            filename_hash = input_hash.replace("|", "_").replace(":", "_")
+            original_filename = f"dragpersp_{node_id}_{filename_hash}.jpg"
+            filepath = os.path.join(temp_dir, original_filename)
+
+            if not os.path.isfile(filepath):
+                # Only save if the file doesn't exist
+                img_array = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
+                pil_preview = Image.fromarray(img_array).convert("RGB")
+                try:
+                    # JPEG is significantly faster to encode than PNG and produces smaller files
+                    # for high-resolution previews, reducing disk I/O and frontend load time.
+                    pil_preview.save(filepath, "JPEG", quality=90)
+                except Exception as e:
+                    print(f"[OlmDragPerspective] Error saving preview image: {e}")
+                    original_filename = None
 
         persp_payload = {
             "tl": [tl_x, tl_y],
