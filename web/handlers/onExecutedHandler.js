@@ -19,6 +19,7 @@ export function handleOnExecuted(node, message) {
   const imageInfo = message?.images_custom?.[0];
   if (!imageInfo) {
     node.image.src = "";
+    node.imageLoaded = false;
     node.properties.actualImageWidth = 0;
     node.properties.actualImageHeight = 0;
     node.setDirtyCanvas(true);

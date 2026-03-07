@@ -21,15 +21,16 @@ def debug_print(*args, **kwargs):
 
 def _compute_input_image_hash(image: torch.Tensor) -> str:
     """
-    Compute a stable SHA-256 hash for the full input tensor.
-    Quantizing to uint8 keeps the hash aligned with effective image pixels.
+    Compute a stable SHA-256 hash for the input tensor.
+    Only the first frame is hashed to avoid copying large batches to CPU.
+    The full tensor shape is included so a batch-size-only change is detected.
     """
     try:
-        arr = image.detach().cpu().numpy()
-        arr_u8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+        frame = image[0].detach().cpu().numpy()
+        frame_u8 = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
         h = hashlib.sha256()
-        h.update(str(arr_u8.shape).encode("utf-8"))
-        h.update(arr_u8.tobytes())
+        h.update(str(image.shape).encode("utf-8"))
+        h.update(frame_u8.tobytes())
         return h.hexdigest()
     except Exception as e:
         print(f"[OlmDrag] Failed to compute input image hash: {e}")

@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { handleDrawForegroundPersp } from "./core/perspectiveRender.js";
 import { handleOnExecutedPersp } from "./handlers/onExecutedPerspHandler.js";
-import { getWidget, hideWidget, setWidgetValue } from "./utils/nodeUtils.js";
+import { getWidget, hideWidget } from "./utils/nodeUtils.js";
 import { clamp } from "./utils/geometryUtils.js";
 import { commitState } from "./core/commitState.js";
 import {
