@@ -405,7 +405,6 @@ app.registerExtension({
 
     function showUploadedPreview(node, uploadedPath) {
       const { subfolder, filename } = splitUploadedPath(uploadedPath);
-      console.log("[OlmDragPersp] showUploadedPreview - path:", uploadedPath, "→ subfolder:", subfolder, "filename:", filename);
       if (!filename) {
         console.warn("[OlmDragPersp] showUploadedPreview - empty filename, aborting");
         return;
@@ -419,9 +418,7 @@ app.registerExtension({
       });
 
       const imageUrl = app.api.apiURL(`/view?${params.toString()}`);
-      console.log("[OlmDragPersp] Setting node.image.src =", imageUrl);
       node.image.onload = () => {
-        console.log("[OlmDragPersp] node.image.onload fired — image loaded successfully");
         node.imageLoaded = true;
 
         const newWidth  = node.image.naturalWidth;
@@ -470,9 +467,7 @@ app.registerExtension({
       node._pasteDedupeKey = dedupeKey;
       setTimeout(() => { if (node._pasteDedupeKey === dedupeKey) node._pasteDedupeKey = null; }, 1000);
 
-      console.log("[OlmDragPersp] Uploading file:", file.name, "type:", file.type, "size:", file.size);
       const uploadedName = await uploadImageToInput(file);
-      console.log("[OlmDragPersp] Upload returned:", uploadedName);
 
       const pastedWidget = getWidget(node, "pasted_image");
       if (!pastedWidget) {
@@ -621,9 +616,7 @@ app.registerExtension({
       // already handles everything the built-in does (upload + widget update) plus
       // the canvas preview that the built-in lacks.
       node.onDragDrop = function (...args) {
-        console.log("[OlmDragPersp] onDragDrop fired, args:", args);
         const file = extractFirstImageFile(args);
-        console.log("[OlmDragPersp] extractFirstImageFile →", file ? `${file.name} (${file.type})` : "null");
         if (!file || !isImageFile(file)) {
           console.warn("[OlmDragPersp] No image file found in drop args");
           return false;
