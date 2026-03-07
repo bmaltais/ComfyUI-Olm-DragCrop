@@ -429,9 +429,13 @@ class OlmDragCrop:
             # reusing stale preview files from previous runs/sessions.
             original_filename = None
         elif cached_hash == input_hash and cached_filename:
-            # Memory cache hit - reuse existing preview
-            original_filename = cached_filename
-        elif batch_size > 0:
+            # Memory cache hit - reuse only if file still exists on disk.
+            temp_dir = get_temp_directory()
+            cached_filepath = os.path.join(temp_dir, cached_filename)
+            if os.path.isfile(cached_filepath):
+                original_filename = cached_filename
+
+        if original_filename is None and input_hash and batch_size > 0:
             temp_dir = get_temp_directory()
             os.makedirs(temp_dir, exist_ok=True)
 
@@ -926,9 +930,13 @@ class OlmDragPerspective:
             # reusing stale preview files from previous runs/sessions.
             original_filename = None
         elif cached_hash == input_hash and cached_filename:
-            # Memory cache hit - reuse existing preview
-            original_filename = cached_filename
-        elif batch_size > 0:
+            # Memory cache hit - reuse only if file still exists on disk.
+            temp_dir = get_temp_directory()
+            cached_filepath = os.path.join(temp_dir, cached_filename)
+            if os.path.isfile(cached_filepath):
+                original_filename = cached_filename
+
+        if original_filename is None and input_hash and batch_size > 0:
             temp_dir = get_temp_directory()
             os.makedirs(temp_dir, exist_ok=True)
 
