@@ -394,23 +394,3 @@ export function applyBowDrag(node, preview, edgeName, localPos, corners) {
   node.properties.perspBows[edgeName] = [bowX, bowY];
 }
 
-/**
- * Compute the approximate output dimensions from the current corners.
- * Uses max of opposite edge lengths.
- */
-export function computeOutputDimensions(corners, scaleX, scaleY) {
-  const [tlx, tly] = [corners.tl[0] * scaleX, corners.tl[1] * scaleY];
-  const [trx, try_] = [corners.tr[0] * scaleX, corners.tr[1] * scaleY];
-  const [brx, bry] = [corners.br[0] * scaleX, corners.br[1] * scaleY];
-  const [blx, bly] = [corners.bl[0] * scaleX, corners.bl[1] * scaleY];
-
-  const topW    = Math.sqrt((trx - tlx) ** 2 + (try_ - tly) ** 2);
-  const bottomW = Math.sqrt((brx - blx) ** 2 + (bry - bly) ** 2);
-  const leftH   = Math.sqrt((blx - tlx) ** 2 + (bly - tly) ** 2);
-  const rightH  = Math.sqrt((brx - trx) ** 2 + (bry - try_) ** 2);
-
-  return {
-    width:  Math.max(1, Math.round(Math.max(topW, bottomW))),
-    height: Math.max(1, Math.round(Math.max(leftH, rightH))),
-  };
-}
