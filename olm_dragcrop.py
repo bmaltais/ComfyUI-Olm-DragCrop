@@ -386,55 +386,6 @@ def _compute_perspective_coeffs(src_pts, dst_pts):
     return coeffs.tolist()
 
 
-def _rotate_point(x, y, w, h, rotate):
-    """Map a point from unrotated image space into rotated image space."""
-    if rotate == "90° CW":
-        return [h - y, x]
-    if rotate == "90° CCW":
-        return [y, w - x]
-    if rotate == "180°":
-        return [w - x, h - y]
-    return [x, y]
-
-
-def _prepare_rotated_geometry(src_pts, width, height, rotate):
-    """
-    Return (rotated_src_pts, rotate_k).
-    rotate_k is np.rot90 k value (counter-clockwise rotations).
-    """
-    rotate_k = 0
-    if rotate == "90° CW":
-        rotate_k = 3
-    elif rotate == "90° CCW":
-        rotate_k = 1
-    elif rotate == "180°":
-        rotate_k = 2
-
-    if rotate_k == 0:
-        return src_pts, rotate_k
-
-    rotated_pts = [
-        _rotate_point(x, y, width, height, rotate)
-        for x, y in src_pts
-    ]
-
-    # Re-label rotated points back to canonical [tl, tr, br, bl] order.
-    # src_pts is ordered [tl, tr, br, bl] in the unrotated image.
-    if rotate == "90° CW":
-        # old bl -> new tl, old tl -> new tr, old tr -> new br, old br -> new bl
-        rotated_src_pts = [rotated_pts[3], rotated_pts[0], rotated_pts[1], rotated_pts[2]]
-    elif rotate == "90° CCW":
-        # old tr -> new tl, old br -> new tr, old bl -> new br, old tl -> new bl
-        rotated_src_pts = [rotated_pts[1], rotated_pts[2], rotated_pts[3], rotated_pts[0]]
-    elif rotate == "180°":
-        # old br -> new tl, old bl -> new tr, old tl -> new br, old tr -> new bl
-        rotated_src_pts = [rotated_pts[2], rotated_pts[3], rotated_pts[0], rotated_pts[1]]
-    else:
-        rotated_src_pts = rotated_pts
-
-    return rotated_src_pts, rotate_k
-
-
 class OlmDragPerspective:
     @classmethod
     def INPUT_TYPES(cls):
