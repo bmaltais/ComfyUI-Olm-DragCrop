@@ -148,6 +148,20 @@ def _load_uploaded_image_tensor(image_name: str):
 
 
 class OlmDragCrop:
+    """Interactive image cropping node with drag handles for precise region selection.
+
+    Features:
+    - Canvas overlay with draggable crop box and corner/edge handles
+    - Aspect ratio locking and snapping to common ratios
+    - Supports wired IMAGE input or paste/drop (Ctrl+V, drag-and-drop)
+    - Real-time preview with automatic cache for unchanged inputs
+    - Outputs cropped image, mask, and crop coordinates as JSON
+
+    The crop box can be resized by dragging corners or edges, and the entire
+    box can be repositioned. When the input image changes resolution, the
+    crop automatically resets to the full image.
+    """
+
     @classmethod
     def INPUT_TYPES(cls):
         input_dir = folder_paths.get_input_directory()
@@ -398,6 +412,18 @@ class OlmDragCrop:
 
 
 class OlmCropInfoInterpreter:
+    """Helper node to extract crop coordinates from OlmDragCrop JSON output.
+
+    Parses the crop_json string produced by OlmDragCrop and outputs individual
+    integer values for left, top, right, bottom, width, height, plus formatted
+    strings (CSV and human-readable).
+
+    Useful for:
+    - Connecting crop coordinates to other nodes that need integer inputs
+    - Debugging crop values in workflow
+    - Converting crop data to different formats
+    """
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -549,6 +575,24 @@ def _compute_perspective_coeffs(src_pts, dst_pts):
 
 
 class OlmDragPerspective:
+    """Perspective correction node with draggable corners and curve warping.
+
+    Features:
+    - Four corner handles to define a quadrilateral region in the source image
+    - Four edge curve handles (bow controls) for Coons patch warping
+    - Optional rotation (90° CW/CCW, 180°) applied before warping
+    - Supports wired IMAGE input or paste/drop (Ctrl+V, drag-and-drop)
+    - Real-time preview with automatic cache for unchanged inputs
+
+    When opencv-python is available, uses cv2.remap with Coons patch for
+    curved edge warping (bilinear quadratic bezier blending). Falls back to
+    PIL perspective transform for planar quads when cv2 is unavailable or
+    curves are disabled.
+
+    The output is a rectified image where the selected quadrilateral is
+    mapped to a rectangle, with dimensions computed from the quad edge lengths.
+    """
+
     @classmethod
     def INPUT_TYPES(cls):
         input_dir = folder_paths.get_input_directory()
