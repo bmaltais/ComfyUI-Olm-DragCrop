@@ -310,26 +310,19 @@ app.registerExtension({
       hideInternalWidgets(node);
       createWidgets(node);
 
-      // Add callback to rotate widget to immediately update corners on rotation change
+      // Intercept the rotate widget to pre-sync lastRotate before the backend executes.
+      // This prevents onExecuted from seeing a spurious rotationChanged and double-resetting
+      // corners. We do NOT call resetCorners here because the preview image is still showing
+      // the pre-rotation frame — corners would be reset to the wrong aspect ratio.
+      // The onExecuted handler resets corners once the backend sends the rotated image.
       const rotateWidget = node.widgets?.find((w) => w.name === "rotate");
       if (rotateWidget) {
         const originalCallback = rotateWidget.callback;
         rotateWidget.callback = function(value) {
-          // Call original callback if it exists
-          if (originalCallback) {
-            originalCallback.call(this, value);
-          }
-          // Update last_rotate widget and property to prevent reset on next execution
+          if (originalCallback) originalCallback.call(this, value);
           const lastRotateWidget = node.widgets?.find((w) => w.name === "last_rotate");
-          if (lastRotateWidget) {
-            lastRotateWidget.value = value;
-          }
+          if (lastRotateWidget) lastRotateWidget.value = value;
           node.properties.lastRotate = value;
-          
-          // Reset corners to fit the rotated image dimensions
-          const preview = getPreviewAreaCached(node);
-          resetCorners(node, preview);
-          node.setDirtyCanvas(true);
         };
       }
 
