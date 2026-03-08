@@ -13,6 +13,7 @@ Features:
 - Real-time UI overlay rendering with snapping and aspect ratio controls
 """
 
+import logging
 import torch
 import numpy as np
 from PIL import Image
@@ -22,6 +23,8 @@ import folder_paths
 from folder_paths import get_temp_directory
 import json
 from collections import OrderedDict
+
+log = logging.getLogger(__name__)
 
 DEBUG_MODE = False
 
@@ -82,7 +85,7 @@ _persp_preview_cache = LRUCache(1000)  # OlmDragPerspective: node_id -> (hash, f
 
 def debug_print(*args, **kwargs):
     if DEBUG_MODE:
-        print(*args, **kwargs)
+        log.debug(" ".join(str(a) for a in args))
 
 
 def _resolve_source_image(
@@ -174,7 +177,7 @@ def _compute_input_image_hash(image: torch.Tensor) -> str:
         total = sample.to(torch.float64).sum().item()  # one scalar to CPU
         return f"{image.shape}|{total:.8f}"
     except Exception as e:
-        print(f"[OlmDrag] Failed to compute input image hash: {e}")
+        log.warning("Failed to compute input image hash: %s", e)
         return ""
 
 
@@ -311,7 +314,7 @@ class OlmDragCrop:
         mask=None,
     ):
         debug_print("=" * 60)
-        print(f"[OlmDragCrop] Node {node_id} executed (Backend)")
+        log.debug("[OlmDragCrop] Node %s executed (Backend)", node_id)
 
         # Normalize None to empty string for optional pasted_image
         if pasted_image is None:
@@ -375,7 +378,7 @@ class OlmDragCrop:
             or crop_width <= 0
             or crop_height <= 0
         ):
-            print("\n[OlmDragCrop] Error invalid crop area → Resetting to full image.")
+            log.warning("[OlmDragCrop] Invalid crop area - resetting to full image.")
             crop_left = 0
             crop_top = 0
             crop_right = 0
@@ -487,7 +490,7 @@ class OlmDragCrop:
                     # for high-resolution previews, reducing disk I/O and frontend load time.
                     pil_image.save(filepath, "JPEG", quality=90)
                 except Exception as e:
-                    print(f"[OlmDragCrop] Error saving preview image: {e}")
+                    log.warning("[OlmDragCrop] Error saving preview image: %s", e)
                     original_filename = None
 
             # Update memory cache for next execution
@@ -796,7 +799,7 @@ class OlmDragPerspective:
         pasted_image: str = "",
         node_id=None,
     ):
-        print(f"[OlmDragPerspective] Node {node_id} executed (Backend)")
+        log.debug("[OlmDragPerspective] Node %s executed (Backend)", node_id)
 
         # Normalize None to empty string for optional pasted_image
         if pasted_image is None:
@@ -874,7 +877,7 @@ class OlmDragPerspective:
         try:
             coeffs = _compute_perspective_coeffs(src_pts_warp, dst_pts)
         except Exception as e:
-            print(f"[OlmDragPerspective] Error computing perspective coefficients: {e}")
+            log.warning("[OlmDragPerspective] Error computing perspective coefficients: %s", e)
             coeffs = None
 
         try:
@@ -904,7 +907,7 @@ class OlmDragPerspective:
                 else:
                     use_curves = False  # cv2 unavailable, fall back to PIL
             except Exception as e:
-                print(f"[OlmDragPerspective] Coons warp setup failed: {e}")
+                log.warning("[OlmDragPerspective] Coons warp setup failed: %s", e)
                 use_curves = False
 
         # Performance optimization: Rotate the entire batch on GPU to avoid per-frame
@@ -941,7 +944,7 @@ class OlmDragPerspective:
                     warped_frames.append(torch.from_numpy(np.clip(warped, 0.0, 1.0)))
                     continue
                 except Exception as e:
-                    print(f"[OlmDragPerspective] Coons warp failed for frame {i}: {e}")
+                    log.warning("[OlmDragPerspective] Coons warp failed for frame %d: %s", i, e)
                     # fall through to PIL path below
 
             # PIL path — used for planar perspective transform, resize fallback,
@@ -956,7 +959,7 @@ class OlmDragPerspective:
                         resample,
                     )
                 except Exception as e:
-                    print(f"[OlmDragPerspective] Warp failed for frame {i}: {e}")
+                    log.warning("[OlmDragPerspective] Warp failed for frame %d: %s", i, e)
                     warped_pil = pil_img.resize((out_w, out_h), resample)
             else:
                 warped_pil = pil_img.resize((out_w, out_h), resample)
@@ -1000,7 +1003,7 @@ class OlmDragPerspective:
                     # for high-resolution previews, reducing disk I/O and frontend load time.
                     pil_preview.save(filepath, "JPEG", quality=90)
                 except Exception as e:
-                    print(f"[OlmDragPerspective] Error saving preview image: {e}")
+                    log.warning("[OlmDragPerspective] Error saving preview image: %s", e)
                     original_filename = None
 
             # Update memory cache for next execution
