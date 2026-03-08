@@ -64,9 +64,13 @@ class LRUCache(OrderedDict):
 # Separate dicts per node class so IDs from different node types never collide.
 # LRU eviction prevents memory leaks in long-running sessions.
 _persp_wire_hashes = LRUCache(1000)  # OlmDragPerspective: node_id -> wire hash
-_persp_pasted_images = LRUCache(1000)  # OlmDragPerspective: node_id -> pasted_image filename
+_persp_pasted_images = LRUCache(
+    1000
+)  # OlmDragPerspective: node_id -> pasted_image filename
 _crop_wire_hashes = LRUCache(1000)  # OlmDragCrop:        node_id -> wire hash
-_crop_pasted_images = LRUCache(1000)  # OlmDragCrop:        node_id -> pasted_image filename
+_crop_pasted_images = LRUCache(
+    1000
+)  # OlmDragCrop:        node_id -> pasted_image filename
 
 # Preview caching: skip expensive preview saves when input hasn't changed.
 # Maps node_id -> (input_hash, preview_filename) to avoid redundant GPU→CPU
@@ -813,7 +817,7 @@ class OlmDragPerspective:
         resolution_changed = (
             current_width != last_width or current_height != last_height
         )
-        rotation_changed = (rotate != last_rotate)
+        rotation_changed = rotate != last_rotate
         reset_quad_ui = False
 
         # Widget coordinates are stored in rotated space (what the user sees).
