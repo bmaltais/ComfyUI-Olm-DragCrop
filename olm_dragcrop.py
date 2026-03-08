@@ -314,7 +314,7 @@ class OlmDragCrop:
         mask=None,
     ):
         debug_print("=" * 60)
-        log.info("[OlmDragCrop] Node %s executed (Backend)", node_id)
+        log.debug("[OlmDragCrop] Node %s executed (Backend)", node_id)
 
         # Normalize None to empty string for optional pasted_image
         if pasted_image is None:
@@ -799,7 +799,7 @@ class OlmDragPerspective:
         pasted_image: str = "",
         node_id=None,
     ):
-        log.info("[OlmDragPerspective] Node %s executed (Backend)", node_id)
+        log.debug("[OlmDragPerspective] Node %s executed (Backend)", node_id)
 
         # Normalize None to empty string for optional pasted_image
         if pasted_image is None:
