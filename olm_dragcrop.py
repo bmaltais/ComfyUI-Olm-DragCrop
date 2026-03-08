@@ -907,12 +907,23 @@ class OlmDragPerspective:
                 print(f"[OlmDragPerspective] Coons warp setup failed: {e}")
                 use_curves = False
 
+        # Performance optimization: Rotate the entire batch on GPU to avoid per-frame
+        # CPU-side rotation. Also move the entire batch to CPU at once for better
+        # PCIe throughput if many frames are present.
+        # We defer .contiguous() to after the CPU transfer: PyTorch can DMA a strided
+        # GPU tensor directly to host without a device-side copy, avoiding a peak GPU
+        # allocation that would temporarily double VRAM usage for the batch.
+        if rotate_k != 0:
+            # torch.rot90 on (B,H,W,C) with dims=(1,2) rotates the spatial dimensions.
+            rotated_batch_np = (
+                torch.rot90(source_image, k=rotate_k, dims=(1, 2)).cpu().contiguous().numpy()
+            )
+        else:
+            rotated_batch_np = source_image.cpu().contiguous().numpy()
+
         warped_frames = []
         for i in range(batch_size):
-            frame = source_image[i].cpu().numpy()  # float32 H,W,C in [0,1]
-            if rotate_k != 0:
-                # rot90 returns a non-contiguous view; make contiguous once here
-                frame = np.ascontiguousarray(np.rot90(frame, k=rotate_k))
+            frame = rotated_batch_np[i]
 
             if use_curves and coons_map_x is not None:
                 try:
