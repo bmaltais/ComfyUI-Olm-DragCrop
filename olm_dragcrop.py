@@ -913,15 +913,16 @@ class OlmDragPerspective:
         # Performance optimization: Rotate the entire batch on GPU to avoid per-frame
         # CPU-side rotation. Also move the entire batch to CPU at once for better
         # PCIe throughput if many frames are present.
+        # We defer .contiguous() to after the CPU transfer: PyTorch can DMA a strided
+        # GPU tensor directly to host without a device-side copy, avoiding a peak GPU
+        # allocation that would temporarily double VRAM usage for the batch.
         if rotate_k != 0:
             # torch.rot90 on (B,H,W,C) with dims=(1,2) rotates the spatial dimensions.
-            # We call .contiguous() because rot90 returns a view with modified strides,
-            # but downstream OpenCV remap requires a contiguous memory layout.
-            rotated_batch = torch.rot90(source_image, k=rotate_k, dims=(1, 2)).contiguous()
+            rotated_batch_np = (
+                torch.rot90(source_image, k=rotate_k, dims=(1, 2)).cpu().contiguous().numpy()
+            )
         else:
-            rotated_batch = source_image
-
-        rotated_batch_np = rotated_batch.cpu().numpy()
+            rotated_batch_np = source_image.cpu().contiguous().numpy()
 
         warped_frames = []
         for i in range(batch_size):
