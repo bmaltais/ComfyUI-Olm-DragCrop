@@ -1,7 +1,31 @@
 {
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:4141",
+    "ANTHROPIC_AUTH_TOKEN": "sk-dummy",
+    "ANTHROPIC_MODEL": "claude-sonnet-4.6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4.5",
+    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+  },
   "permissions": {
     "allow": [
-      "Bash(uv run ruff check .)"
+      "Bash(uv run ruff check .)",
+      "Read(//f/ComfyUI/**)",
+      "Bash(uv run black image_editor/ __init__.py)",
+      "Bash(uv run ruff check image_editor/ __init__.py)",
+      "Bash(uv run ruff check --fix image_editor/ __init__.py)",
+      "Bash(uv run black --check image_editor/ __init__.py)",
+      "Read(//c//**)",
+      "WebFetch(domain:cdnjs.cloudflare.com)",
+      "WebFetch(domain:cdn.jsdelivr.net)",
+      "Bash(mv vueEditorWidget.js vueEditorWidget_old.js)",
+      "Bash(mv vueEditorWidget_fix.js vueEditorWidget.js)",
+      "Bash(sed 's/\\\\/\\\\/ Set up ResizeObserver to watch for node size changes and update image sizing/\\\\/\\\\/ Set up ResizeObserver to watch for node size changes and update sizing/' vueEditorWidget.js)",
+      "Bash(mv temp_file vueEditorWidget.js)"
+    ],
+    "additionalDirectories": [
+      "F:\\ComfyUI\\custom_nodes\\ComfyUI-Olm-DragCrop\\image_editor\\web"
     ]
   }
 }
