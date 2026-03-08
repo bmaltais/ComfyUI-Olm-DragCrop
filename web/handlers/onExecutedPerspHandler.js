@@ -95,6 +95,9 @@ export function handleOnExecutedPersp(node, message) {
         if (extendWidget) extendWidget.value = "None";
         const rotateWidget = getWidget(node, "rotate");
         if (rotateWidget) rotateWidget.value = "None";
+        const lastRotateWidget = getWidget(node, "last_rotate");
+        if (lastRotateWidget) lastRotateWidget.value = "None";
+        node.properties.lastRotate = "None";
       }
 
       resetCorners(node, preview);

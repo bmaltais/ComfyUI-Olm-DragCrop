@@ -66,7 +66,7 @@ export function removePerspInputs(node) {
     [
       "drawing_version",
       "pasted_image",
-      "last_width",  "last_height",
+      "last_width",  "last_height", "last_rotate",
       "tl_x",        "tl_y",
       "tr_x",        "tr_y",
       "br_x",        "br_y",
