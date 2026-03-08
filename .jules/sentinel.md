@@ -1,0 +1,4 @@
+## 2025-05-22 - [Path Traversal via node_id]
+**Vulnerability:** The `node_id` (passed from ComfyUI frontend as `UNIQUE_ID`) was used unsanitized to construct filenames for temporary preview images (`dragcrop_{nid}_{hash}.jpg`). A malicious `node_id` containing `../` could be used to write files to arbitrary locations on the server's filesystem.
+**Learning:** Even internal system-generated identifiers like `node_id` should be treated as untrusted input if they can be influenced by the client (e.g., via modified network requests) and are subsequently used in security-sensitive operations like file path construction.
+**Prevention:** Always sanitize any input used in file paths or cache keys. A strict whitelist of allowed characters (alphanumeric, underscores, hyphens) is a robust and simple way to prevent path traversal and other injection attacks.
