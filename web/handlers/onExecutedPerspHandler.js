@@ -54,7 +54,16 @@ export function handleOnExecutedPersp(node, message) {
     const last_height_widget = getWidget(node, "last_height");
     if (last_height_widget) last_height_widget.value = newHeight;
 
-    if (resolutionChanged || shouldReset || hashChanged) {
+    // Track rotation changes
+    const currentRotate = backendData?.rotate || "None";
+    const lastRotate = node.properties.lastRotate || "None";
+    const rotationChanged = currentRotate !== lastRotate;
+    node.properties.lastRotate = currentRotate;
+
+    const last_rotate_widget = getWidget(node, "last_rotate");
+    if (last_rotate_widget) last_rotate_widget.value = currentRotate;
+
+    if (resolutionChanged || shouldReset || hashChanged || rotationChanged) {
       if (node.onResize) node.onResize(node.size);
 
       const newSize = node.computeSize();
@@ -77,13 +86,19 @@ export function handleOnExecutedPersp(node, message) {
     if (preserveCorners) {
       // User dropped an image and may have already adjusted corners — don't
       // touch them regardless of what the backend sent back.
-    } else if (shouldReset || resolutionChanged || hashChanged) {
-      // Reset transform settings (canvas extend and rotation) on new image
-      node.properties.canvasExtendLabel = "None";
-      const extendWidget = getWidget(node, "Canvas Extend");
-      if (extendWidget) extendWidget.value = "None";
-      const rotateWidget = getWidget(node, "rotate");
-      if (rotateWidget) rotateWidget.value = "None";
+    } else if (shouldReset || resolutionChanged || hashChanged || rotationChanged) {
+      // Reset corners to fit the (possibly rotated) image
+      // But only reset rotation widget if it's a new image (not just a rotation change)
+      if (resolutionChanged || hashChanged) {
+        node.properties.canvasExtendLabel = "None";
+        const extendWidget = getWidget(node, "Canvas Extend");
+        if (extendWidget) extendWidget.value = "None";
+        const rotateWidget = getWidget(node, "rotate");
+        if (rotateWidget) rotateWidget.value = "None";
+        const lastRotateWidget = getWidget(node, "last_rotate");
+        if (lastRotateWidget) lastRotateWidget.value = "None";
+        node.properties.lastRotate = "None";
+      }
 
       resetCorners(node, preview);
     } else if (backendData) {

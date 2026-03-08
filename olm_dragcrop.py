@@ -712,6 +712,7 @@ class OlmDragPerspective:
                 "left_bow_x": ("INT", {"default": 0, "min": -4096, "max": 4096}),
                 "left_bow_y": ("INT", {"default": 0, "min": -4096, "max": 4096}),
                 "rotate": (["None", "90° CW", "90° CCW", "180°"], {"default": "None"}),
+                "last_rotate": ("STRING", {"default": "None"}),
             },
             "optional": {
                 "image": ("IMAGE",),
@@ -757,6 +758,7 @@ class OlmDragPerspective:
         left_bow_x: int = 0,
         left_bow_y: int = 0,
         rotate: str = "None",
+        last_rotate: str = "None",
         image: torch.Tensor = None,
         pasted_image: str = "",
         node_id=None,
@@ -782,6 +784,7 @@ class OlmDragPerspective:
         resolution_changed = (
             current_width != last_width or current_height != last_height
         )
+        rotation_changed = (rotate != last_rotate)
         reset_quad_ui = False
 
         # Widget coordinates are stored in rotated space (what the user sees).
@@ -791,7 +794,7 @@ class OlmDragPerspective:
         else:
             rotated_w, rotated_h = current_width, current_height
 
-        if resolution_changed:
+        if resolution_changed or rotation_changed:
             tl_x, tl_y = 0, 0
             tr_x, tr_y = rotated_w, 0
             br_x, br_y = rotated_w, rotated_h
@@ -980,6 +983,8 @@ class OlmDragPerspective:
             "out_width": out_w,
             "out_height": out_h,
             "original_size": [current_width, current_height],
+            "rotated_size": [rotated_w, rotated_h],
+            "rotate": rotate,
             "reset_quad_ui": reset_quad_ui,
             "input_hash": input_hash,
             "clear_pasted_image": clear_pasted_on_frontend,
